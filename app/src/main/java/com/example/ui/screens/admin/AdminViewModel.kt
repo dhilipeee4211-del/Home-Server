@@ -70,29 +70,10 @@ class AdminViewModel(
             initialValue = emptyList()
         )
 
-    private val _backups = MutableStateFlow<List<BackupEntry>>(
-        listOf(
-            BackupEntry("bk_1", "dhiliphome_snapshot_2026_09_13.tar.gz", "1.4 GB", "Yesterday, 03:00 AM"),
-            BackupEntry("bk_2", "dhiliphome_config_weekly.tar.gz", "340 MB", "Sep 07, 2026, 03:00 AM"),
-            BackupEntry("bk_3", "dhiliphome_system_init.tar.gz", "820 MB", "Aug 31, 2026, 12:15 PM")
-        )
-    )
+    private val _backups = MutableStateFlow<List<BackupEntry>>(emptyList())
     val backups: StateFlow<List<BackupEntry>> = _backups.asStateFlow()
 
-    private val _systemLogs = MutableStateFlow<List<String>>(
-        listOf(
-            "[systemd] Started DhilipHome High-Performance Web & File Server.",
-            "[dhilip-web] Listening on 0.0.0.0:8080 (REST API / WebSocket ready).",
-            "[dhilip-media] Direct streaming mount active at /data/media.",
-            "[smbd] Samba NetBIOS daemon registered workgroup WORKGROUP.",
-            "[sshd] Server listening on 0.0.0.0 port 22.",
-            "[downloader] Engine initialized with multi-stream remote executor.",
-            "[storage] ZFS / ext4 volume mounted rw,noatime,nodiratime.",
-            "[auth] Session authenticated for administrator dhileepan.",
-            "[kernel] Hardware detectors synchronized real CPU & RAM telemetry.",
-            "[network] Tailscale interface ready (100.x.x.x overlay active)."
-        )
-    )
+    private val _systemLogs = MutableStateFlow<List<String>>(emptyList())
     val systemLogs: StateFlow<List<String>> = _systemLogs.asStateFlow()
 
     fun refreshDashboard() {
@@ -175,7 +156,7 @@ class AdminViewModel(
     }
 
     fun clearLogs() {
-        _systemLogs.value = listOf("[dhilip-system] Logs cleared by admin at ${SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())}.")
+        _systemLogs.value = emptyList()
     }
 
     fun addLog(msg: String) {

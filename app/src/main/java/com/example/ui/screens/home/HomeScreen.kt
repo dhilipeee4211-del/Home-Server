@@ -102,7 +102,7 @@ fun HomeScreen(
                         )
                     }
 
-                    DemoModeBadge(text = if (serverStatus.isOnline) "ONLINE" else "LOCAL LAN")
+                    DemoModeBadge(text = if (serverStatus.isOnline) "ONLINE" else "OFFLINE")
                 }
             }
         }

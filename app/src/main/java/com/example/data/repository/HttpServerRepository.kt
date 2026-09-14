@@ -580,8 +580,8 @@ object HttpServerRepository : ServerRepository {
                 title = file.name.substringBeforeLast('.').replace('_', ' ').replace('-', ' '),
                 category = category,
                 year = parseMediaYear(file.modifiedDate),
-                duration = "Unknown",
-                genre = "Local Media",
+                duration = "",
+                genre = "Server Media",
                 rating = 0.0,
                 description = "Streaming from ${ServerConfig.serverHost.value}:${ServerConfig.serverPort.value}",
                 posterGradientColor = when (category) {

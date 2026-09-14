@@ -285,7 +285,7 @@ fun AdminScreen(
                             )
                         }
 
-                        DemoModeBadge(text = if (serverStatus.isOnline) "ONLINE" else "LOCAL DEVICE")
+                        DemoModeBadge(text = if (serverStatus.isOnline) "ONLINE" else "OFFLINE")
                     }
                 }
             }
@@ -390,10 +390,10 @@ fun AdminScreen(
                         )
                         DashboardMetric(
                             label = "System State",
-                            value = if (serverStatus.isOnline) "Active" else "Local Ready",
+                            value = if (serverStatus.isOnline) "Active" else "Offline",
                             subValue = serverStatus.statusText,
                             icon = Icons.Default.Memory,
-                            progressFraction = if (serverStatus.isOnline) 1.0f else 0.8f,
+                            progressFraction = if (serverStatus.isOnline) 1.0f else 0.0f,
                             accentColor = if (serverStatus.isOnline) StatusRunning else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
@@ -405,10 +405,10 @@ fun AdminScreen(
                     ) {
                         DashboardMetric(
                             label = "Host Target",
-                            value = serverStatus.serverHostname.ifBlank { "Local Device" },
+                            value = serverStatus.serverHostname.ifBlank { if (serverStatus.isOnline) "Server" else "Offline" },
                             subValue = "${serverStatus.serverIp}",
                             icon = Icons.Default.Storage,
-                            progressFraction = 1.0f,
+                            progressFraction = if (serverStatus.isOnline) 1.0f else 0.0f,
                             accentColor = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.weight(1f)
                         )
@@ -654,7 +654,7 @@ fun AdminScreen(
 
                     Text(text = "Mounted File Systems:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     if (storageInfo.partitions.isEmpty()) {
-                        Text(text = "Internal Flash Memory (/data) • Active", style = MaterialTheme.typography.bodySmall)
+                        Text(text = "No mounted partitions reported by server", style = MaterialTheme.typography.bodySmall)
                     } else {
                         storageInfo.partitions.forEach { p ->
                             Box(

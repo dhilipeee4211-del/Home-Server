@@ -25,9 +25,9 @@ data class MediaItem(
     val isContinueWatching: Boolean = false,
     val isRecentlyAdded: Boolean = false,
     val isRecommended: Boolean = false,
-    val resolution: String = "4K HDR",
-    val audioFormat: String = "Dolby Atmos",
-    val fileSizeBytes: String = "14.2 GB",
+    val resolution: String = "",
+    val audioFormat: String = "",
+    val fileSizeBytes: String = "",
     val streamUrl: String = "",
     val filePath: String = ""
 )

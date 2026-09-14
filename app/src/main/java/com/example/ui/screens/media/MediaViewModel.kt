@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.model.MediaCategory
 import com.example.data.model.MediaItem
 import com.example.domain.repository.ServerRepository
+import com.example.data.repository.HttpServerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,13 @@ class MediaViewModel(
 
     private val _selectedCategory = MutableStateFlow(MediaCategory.ALL)
     val selectedCategory: StateFlow<MediaCategory> = _selectedCategory.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    init {
+        refreshMedia()
+    }
 
     val mediaItems: StateFlow<List<MediaItem>> = _selectedCategory
         .flatMapLatest { category -> repository.getMedia(category) }
@@ -51,6 +59,18 @@ class MediaViewModel(
 
     fun selectCategory(category: MediaCategory) {
         _selectedCategory.value = category
+        refreshMedia(category)
+    }
+
+    fun refreshMedia(category: MediaCategory = _selectedCategory.value) {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                HttpServerRepository.refreshMediaCatalog(category)
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
     }
 
     fun toggleFavorite(id: String, onComplete: (Boolean) -> Unit = {}) {
