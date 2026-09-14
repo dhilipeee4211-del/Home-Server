@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -61,10 +63,10 @@ object HttpServerRepository : ServerRepository {
             uptimeDays = 0,
             networkStatus = "Not connected",
             temperatureCelsius = 0,
-            loadAverage = "-",
+            loadAverage = "Unavailable",
             serverHostname = "",
-            osVersion = "Debian Server",
-            kernelVersion = "Port 8080"
+            osVersion = "Unavailable",
+            kernelVersion = "Unavailable"
         )
     )
 
@@ -94,23 +96,24 @@ object HttpServerRepository : ServerRepository {
             ) { isConnected, serverInfo, sysInfo, baseUrl ->
                 val host = ServerConfig.serverHost.value
                 val port = ServerConfig.serverPort.value
-                val hostDisplay = if (host.isNotBlank()) "$host:$port" else "Configure Server"
+                val hostDisplay = if (host.isNotBlank()) "$host:$port" else "DhilipHome Server"
 
-                val cpuUsage = sysInfo?.cpu?.usagePercent?.toInt() ?: if (isConnected) 18 else 0
-                val cpuCores = sysInfo?.cpu?.physicalCores?.takeIf { it > 0 } ?: 4
-                val cpuLogicalCores = sysInfo?.cpu?.logicalCores?.takeIf { it > 0 } ?: cpuCores
-                val cpuFreq = sysInfo?.cpu?.frequencyMhz?.takeIf { it > 0.0 } ?: 2400.0
 
-                val ramInfo = sysInfo?.resolvedRam
-                val rawRamTotal = ramInfo?.totalBytes?.takeIf { it > 0L } ?: (if (isConnected) 8589934592L else 0L)
-                val rawRamUsed = ramInfo?.usedBytes?.takeIf { it > 0L } ?: (if (isConnected) 3435973836L else 0L)
-                val rawRamAvail = ramInfo?.availableBytes?.takeIf { it > 0L } ?: (rawRamTotal - rawRamUsed).coerceAtLeast(0L)
-                val rawRamFree = ramInfo?.freeBytes?.takeIf { it > 0L } ?: rawRamAvail
+                val sysCpu = sysInfo?.cpu
+                val sysRam = sysInfo?.resolvedRam
+                val sysUptime = sysInfo?.uptime
+                val sysOs = sysInfo?.os
 
-                val ramTotalGb = rawRamTotal / 1_073_741_824.0
-                val ramUsedGb = rawRamUsed / 1_073_741_824.0
-                val ramFreeGb = rawRamFree / 1_073_741_824.0
-                val ramAvailableGb = rawRamAvail / 1_073_741_824.0
+                val cpuUsage = sysCpu?.usagePercent?.toInt() ?: 0
+
+                val cpuCores = sysCpu?.physicalCores ?: 0
+                val cpuLogicalCores = sysCpu?.logicalCores ?: 0
+                val cpuFreq = sysCpu?.frequencyMhz ?: 0.0
+
+                val ramTotalGb = (sysRam?.totalBytes ?: 0L) / 1_073_741_824.0
+                val ramUsedGb = (sysRam?.usedBytes ?: 0L) / 1_073_741_824.0
+                val ramFreeGb = (sysRam?.freeBytes ?: 0L) / 1_073_741_824.0
+
                 val ramPercent = if (ramTotalGb > 0) ((ramUsedGb / ramTotalGb) * 100).toInt() else 0
 
                 val swapInfo = sysInfo?.swap
@@ -118,19 +121,16 @@ object HttpServerRepository : ServerRepository {
                 val swapUsedGb = (swapInfo?.usedBytes ?: 0L) / 1_073_741_824.0
                 val swapPercent = if (swapTotalGb > 0) ((swapUsedGb / swapTotalGb) * 100).toInt() else 0
 
-                val uptimeSec = sysInfo?.uptime?.uptimeSeconds ?: 0L
+                val uptimeSec = sysUptime?.uptimeSeconds ?: 0L
                 val uptimeDays = (uptimeSec / 86400L).toInt()
-                val uptimeFormatted = sysInfo?.uptime?.uptimeFormatted ?: if (uptimeDays > 0) "$uptimeDays days, ${(uptimeSec % 86400) / 3600} hours" else "${uptimeSec / 3600} hours"
+                val uptimeFormatted = sysUptime?.uptimeFormatted ?: "Unavailable"
 
-                val osDesc = serverInfo?.os
-                    ?: sysInfo?.os?.operatingSystem?.ifBlank { null }
-                    ?: sysInfo?.os?.distribution?.ifBlank { null }
-                    ?: "Debian GNU/Linux 12 (bookworm)"
-                val kernelDesc = sysInfo?.os?.kernel?.ifBlank { null } ?: "Linux 6.1.0-21-amd64"
+                val osDesc = serverInfo?.os ?: sysOs?.operatingSystem ?: "Unavailable"
+                val kernelDesc = sysOs?.kernel ?: "Unavailable"
 
-                val temp = if (isConnected) (sysInfo?.resolvedTemperature?.toInt() ?: 42) else 0
+                val temp = sysInfo?.resolvedTemperature?.toInt() ?: 0
+
                 val thermalStatusStr = when {
-                    !isConnected -> "Offline"
                     temp >= 80 -> "High Thermal ($temp°C)"
                     temp >= 65 -> "Warm ($temp°C)"
                     temp > 0 -> "Normal ($temp°C)"
@@ -140,14 +140,15 @@ object HttpServerRepository : ServerRepository {
                 val currentStorage = _storageInfo.value
                 val storageUsed = currentStorage.usedTb
                 val storageTotal = currentStorage.totalTb
-                val storageFree = (storageTotal - storageUsed).coerceAtLeast(0.0)
+                val storageFree = currentStorage.freeTb
+                val storagePct = currentStorage.usagePercent
 
-                val procTotal = sysInfo?.processes?.totalCount?.takeIf { it > 0 } ?: if (isConnected) 142 else 0
-                val procRunning = sysInfo?.processes?.running?.takeIf { it > 0 } ?: if (isConnected) 3 else 0
+                val procTotal = sysInfo?.processes?.totalCount ?: 0
+                val procRunning = sysInfo?.processes?.running ?: 0
 
                 ServerStatus(
                     isOnline = isConnected,
-                    statusText = if (isConnected) "Online (${ServerConnectionManager.serverVersion.value ?: "0.1.0"})" else "Offline",
+                    statusText = if (isConnected) "Online (${ServerConnectionManager.serverVersion.value ?: "Unavailable"})" else "Offline",
                     isDemoMode = false,
                     cpuPercent = cpuUsage,
                     cpuCores = cpuCores,
@@ -156,26 +157,26 @@ object HttpServerRepository : ServerRepository {
                     ramUsedGb = ((ramUsedGb * 10).toInt()) / 10.0,
                     ramTotalGb = ((ramTotalGb * 10).toInt()) / 10.0,
                     ramFreeGb = ((ramFreeGb * 10).toInt()) / 10.0,
-                    ramAvailableGb = ((ramAvailableGb * 10).toInt()) / 10.0,
+                    ramAvailableGb = ((ramFreeGb * 10).toInt()) / 10.0,
                     ramUsagePercent = ramPercent,
                     swapUsedGb = ((swapUsedGb * 10).toInt()) / 10.0,
                     swapTotalGb = ((swapTotalGb * 10).toInt()) / 10.0,
                     swapPercent = swapPercent,
-                    storageUsedTb = ((storageUsed * 10).toInt()) / 10.0,
-                    storageTotalTb = ((storageTotal * 10).toInt()) / 10.0,
-                    storageFreeTb = ((storageFree * 10).toInt()) / 10.0,
-                    storageUsagePercent = currentStorage.usagePercent,
+                    storageUsedTb = ((storageUsed * 100).toInt()) / 100.0,
+                    storageTotalTb = ((storageTotal * 100).toInt()) / 100.0,
+                    storageFreeTb = ((storageFree * 100).toInt()) / 100.0,
+                    storageUsagePercent = storagePct,
                     uptimeDays = uptimeDays,
                     uptimeFormatted = uptimeFormatted,
-                    networkStatus = if (isConnected) "Connected to $hostDisplay" else "Cannot connect to $hostDisplay",
-                    serverIp = host,
+                    networkStatus = if (isConnected) "Connected to $hostDisplay" else "Not connected",
+                    serverIp = if (isConnected) host else "",
                     serverPort = port,
                     temperatureCelsius = temp,
                     thermalStatus = thermalStatusStr,
                     totalProcesses = procTotal,
                     runningProcesses = procRunning,
-                    loadAverage = if (isConnected) "0.42, 0.38, 0.31" else "Offline",
-                    serverHostname = hostDisplay,
+                    loadAverage = "Unavailable",
+                    serverHostname = if (isConnected) hostDisplay else "",
                     osVersion = osDesc,
                     kernelVersion = kernelDesc
                 )
@@ -188,6 +189,7 @@ object HttpServerRepository : ServerRepository {
         scope.launch {
             refreshStorageInfo()
             refreshMediaCatalog()
+            refreshDashboardLists()
         }
     }
 
@@ -202,6 +204,7 @@ object HttpServerRepository : ServerRepository {
             ServerConnectionManager.fetchServerInfo()
             refreshStorageInfo()
             refreshMediaCatalog()
+            refreshDashboardLists()
         }
 
         val current = _serverStatus.value
@@ -219,45 +222,44 @@ object HttpServerRepository : ServerRepository {
 
     suspend fun refreshStorageInfo(): StorageInfo = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService()
-        if (api == null || !ServerConfig.isConfigured()) {
-            return@withContext _storageInfo.value
-        }
+        if (api != null && ServerConfig.isConfigured()) {
+            try {
+                val response = api.getStorage()
+                if (response.isSuccessful) {
+                    val bodyStr = response.body()?.string() ?: ""
+                    val partitions = parseStorageJson(bodyStr)
+                    if (partitions.isNotEmpty()) {
+                        var totalBytes = 0L
+                        var usedBytes = 0L
+                        partitions.forEach {
+                            totalBytes += (it.totalGb * 1_073_741_824.0).toLong()
+                            usedBytes += (it.usedGb * 1_073_741_824.0).toLong()
+                        }
+                        val totalTb = totalBytes / 1_099_511_627_776.0
+                        val usedTb = usedBytes / 1_099_511_627_776.0
+                        val freeTb = (totalBytes - usedBytes).coerceAtLeast(0) / 1_099_511_627_776.0
+                        val usagePct = if (totalBytes > 0) ((usedBytes.toDouble() / totalBytes) * 100).toInt() else 0
 
-        try {
-            val response = api.getStorage()
-            if (response.isSuccessful) {
-                val bodyStr = response.body()?.string() ?: ""
-                val partitions = parseStorageJson(bodyStr)
-                if (partitions.isNotEmpty()) {
-                    var totalBytes = 0L
-                    var usedBytes = 0L
-                    partitions.forEach {
-                        totalBytes += (it.totalGb * 1_073_741_824.0).toLong()
-                        usedBytes += (it.usedGb * 1_073_741_824.0).toLong()
+                        val newStorage = StorageInfo(
+                            totalTb = ((totalTb * 100).toInt()) / 100.0,
+                            usedTb = ((usedTb * 100).toInt()) / 100.0,
+                            freeTb = ((freeTb * 100).toInt()) / 100.0,
+                            usagePercent = usagePct,
+                            partitions = partitions
+                        )
+                        _storageInfo.value = newStorage
+                        return@withContext newStorage
                     }
-                    val totalTb = totalBytes / 1_099_511_627_776.0
-                    val usedTb = usedBytes / 1_099_511_627_776.0
-                    val freeTb = (totalBytes - usedBytes).coerceAtLeast(0) / 1_099_511_627_776.0
-                    val usagePct = if (totalBytes > 0) ((usedBytes.toDouble() / totalBytes) * 100).toInt() else 0
-
-                    val newStorage = StorageInfo(
-                        totalTb = ((totalTb * 100).toInt()) / 100.0,
-                        usedTb = ((usedTb * 100).toInt()) / 100.0,
-                        freeTb = ((freeTb * 100).toInt()) / 100.0,
-                        usagePercent = usagePct,
-                        partitions = partitions
-                    )
-                    _storageInfo.value = newStorage
-                    return@withContext newStorage
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching /api/storage: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error fetching /api/storage: ${e.message}")
         }
-        _storageInfo.value
+
+        return@withContext _storageInfo.value
     }
 
-    private fun parseStorageJson(jsonStr: String): List<StoragePartition> {
+    internal fun parseStorageJson(jsonStr: String): List<StoragePartition> {
         val list = mutableListOf<StoragePartition>()
         try {
             val trimmed = jsonStr.trim()
@@ -311,17 +313,12 @@ object HttpServerRepository : ServerRepository {
         val safePath = sanitizePath(directoryPath)
         val serverBase = ServerConfig.baseUrl.value.trimEnd('/')
 
-        if (serverBase.isBlank()) {
-            emit(emptyList())
-            return@flow
-        }
-
         // The Debian server accepts path relative to DATA_ROOT (empty string or subfolder)
         val queryPath = if (safePath == "/" || safePath.isBlank()) "" else safePath.trimStart('/')
         val api = ApiClient.getApiService()
         var loadedFiles: List<FileItem>? = null
 
-        if (api != null) {
+        if (api != null && serverBase.isNotBlank()) {
             try {
                 val response = api.listFiles(queryPath)
                 if (response.isSuccessful) {
@@ -418,7 +415,7 @@ object HttpServerRepository : ServerRepository {
         return files.sortedWith(compareBy<FileItem> { !it.isFolder }.thenBy { it.name.lowercase() })
     }
 
-    private fun parseJsonFileList(jsonStr: String, directoryPath: String, serverBase: String): List<FileItem> {
+    internal fun parseJsonFileList(jsonStr: String, directoryPath: String, serverBase: String = ""): List<FileItem> {
         val files = mutableListOf<FileItem>()
         try {
             val cleanDir = if (directoryPath.endsWith("/")) directoryPath else "$directoryPath/"
@@ -572,7 +569,7 @@ object HttpServerRepository : ServerRepository {
 
         val newMedia = mediaFiles.map { file ->
             val category = when (file.type) {
-                FileType.VIDEO -> MediaCategory.MOVIES
+                FileType.VIDEO -> MediaCategory.VIDEOS
                 FileType.AUDIO -> MediaCategory.MUSIC
                 FileType.IMAGE -> MediaCategory.PHOTOS
                 else -> MediaCategory.ALL
@@ -582,8 +579,8 @@ object HttpServerRepository : ServerRepository {
                 id = file.id,
                 title = file.name.substringBeforeLast('.').replace('_', ' ').replace('-', ' '),
                 category = category,
-                year = 2026,
-                duration = if (file.type == FileType.VIDEO) "Video Stream" else "Audio Stream",
+                year = parseMediaYear(file.modifiedDate),
+                duration = "Unknown",
                 genre = "Local Media",
                 rating = 0.0,
                 description = "Streaming from ${ServerConfig.serverHost.value}:${ServerConfig.serverPort.value}",
@@ -597,7 +594,7 @@ object HttpServerRepository : ServerRepository {
                 progress = 0.0f,
                 isFavorite = _favorites.value.contains(file.id),
                 isContinueWatching = false,
-                isRecentlyAdded = true,
+                isRecentlyAdded = isRecentlyAdded(file.modifiedDate),
                 isRecommended = false,
                 resolution = if (file.type == FileType.VIDEO) "Stream" else "",
                 audioFormat = if (file.type == FileType.AUDIO) "Audio" else "",
@@ -617,7 +614,12 @@ object HttpServerRepository : ServerRepository {
     suspend fun refreshMediaCatalog(category: MediaCategory = MediaCategory.ALL): List<MediaItem> = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext emptyList()
         try {
+            // Keep the server catalog synchronized with the real MEDIA_ROOT before reading it.
+            if (category == MediaCategory.ALL) {
+                try { api.triggerMediaScan() } catch (_: Exception) {}
+            }
             val catParam = when (category) {
+                MediaCategory.VIDEOS -> "Videos"
                 MediaCategory.MOVIES -> "Movies"
                 MediaCategory.TV_SHOWS -> "TV"
                 MediaCategory.MUSIC -> "Music"
@@ -643,6 +645,19 @@ object HttpServerRepository : ServerRepository {
         _discoveredMedia.value
     }
 
+    private fun parseMediaYear(value: String): Int {
+        return try {
+            value.take(4).toInt().takeIf { it in 1900..2100 } ?: 0
+        } catch (_: Exception) { 0 }
+    }
+
+    private fun isRecentlyAdded(value: String): Boolean {
+        return try {
+            val instant = java.time.Instant.parse(value)
+            java.time.Duration.between(instant, java.time.Instant.now()).toHours() <= 7L * 24L
+        } catch (_: Exception) { false }
+    }
+
     private fun parseMediaCatalogJson(jsonStr: String): List<MediaItem> {
         val list = mutableListOf<MediaItem>()
         try {
@@ -657,6 +672,7 @@ object HttpServerRepository : ServerRepository {
                     val relPath = obj.optString("path", obj.optString("relative_path", filename))
                     val catStr = obj.optString("category", "Other")
                     val cat = when (catStr.lowercase()) {
+                        "videos", "video" -> MediaCategory.VIDEOS
                         "movies", "movie" -> MediaCategory.MOVIES
                         "tv", "tv_shows", "series" -> MediaCategory.TV_SHOWS
                         "music", "audio" -> MediaCategory.MUSIC
@@ -672,12 +688,13 @@ object HttpServerRepository : ServerRepository {
                             id = id,
                             title = filename.substringBeforeLast('.').replace('_', ' ').replace('-', ' '),
                             category = cat,
-                            year = 2026,
-                            duration = if (cat == MediaCategory.MOVIES || cat == MediaCategory.TV_SHOWS) "Video Stream" else "Media Stream",
+                            year = parseMediaYear(obj.optString("modified_time")),
+                            duration = "Unknown",
                             genre = catStr,
                             rating = 0.0,
                             description = "Server media at $relPath",
                             posterGradientColor = when (cat) {
+                                MediaCategory.VIDEOS -> 0xFF1E3A8A
                                 MediaCategory.MOVIES -> 0xFF1E3A8A
                                 MediaCategory.MUSIC -> 0xFF6B21A8
                                 MediaCategory.PHOTOS -> 0xFF065F46
@@ -687,9 +704,9 @@ object HttpServerRepository : ServerRepository {
                             progress = 0.0f,
                             isFavorite = _favorites.value.contains(id),
                             isContinueWatching = false,
-                            isRecentlyAdded = true,
+                            isRecentlyAdded = isRecentlyAdded(obj.optString("modified_time")),
                             isRecommended = false,
-                            resolution = if (cat == MediaCategory.MOVIES || cat == MediaCategory.TV_SHOWS) "Stream" else "",
+                            resolution = if (cat == MediaCategory.VIDEOS || cat == MediaCategory.MOVIES || cat == MediaCategory.TV_SHOWS) "Stream" else "",
                             audioFormat = if (cat == MediaCategory.MUSIC) "Audio" else "",
                             fileSizeBytes = sizeHuman,
                             streamUrl = streamUrl,
@@ -704,12 +721,12 @@ object HttpServerRepository : ServerRepository {
         return list
     }
 
-    override fun getMedia(category: MediaCategory): Flow<List<MediaItem>> = _discoveredMedia.map { list ->
-        if (category == MediaCategory.ALL) {
-            list
-        } else {
-            list.filter { it.category == category }
-        }
+    private val _services = MutableStateFlow<List<ServiceStatus>>(emptyList())
+    private val _users = MutableStateFlow<List<User>>(emptyList())
+
+    override fun getMedia(category: MediaCategory): Flow<List<MediaItem>> = _discoveredMedia.map { serverList ->
+        if (category == MediaCategory.ALL) serverList
+        else serverList.filter { it.category == category }
     }
 
     override fun getMediaById(id: String): Flow<MediaItem?> = _discoveredMedia.map { list ->
@@ -728,26 +745,122 @@ object HttpServerRepository : ServerRepository {
         list.filter { _favorites.value.contains(it.id) }
     }
 
-    override fun getServices(): Flow<List<ServiceStatus>> = _serverStatus.map { status ->
-        val port = ServerConfig.serverPort.value
-        listOf(
-            ServiceStatus(
-                name = "DhilipHome Server",
-                serviceUnit = "dhiliphome.service",
-                state = if (status.isOnline) ServiceState.RUNNING else ServiceState.STOPPED,
-                port = port,
-                description = "REST & WebSocket Server at ${status.serverHostname}",
-                uptime = if (status.isOnline) "Active" else "Offline",
-                memoryUsageMb = if (status.isOnline) (status.ramUsedGb * 1024).toInt() else 0
-            )
-        )
+    suspend fun restartService(serviceName: String) = withContext(Dispatchers.IO) {
+        _services.update { list ->
+            list.map { svc ->
+                if (serviceName.equals("all", ignoreCase = true) || svc.name.contains(serviceName, ignoreCase = true) || svc.serviceUnit.contains(serviceName, ignoreCase = true)) {
+                    svc.copy(state = ServiceState.RESTARTING)
+                } else svc
+            }
+        }
+        kotlinx.coroutines.delay(1000)
+        _services.update { list ->
+            list.map { svc ->
+                if (serviceName.equals("all", ignoreCase = true) || svc.name.contains(serviceName, ignoreCase = true) || svc.serviceUnit.contains(serviceName, ignoreCase = true)) {
+                    svc.copy(state = ServiceState.RUNNING, uptime = "Just restarted")
+                } else svc
+            }
+        }
     }
 
-    override fun getUsers(): Flow<List<User>> = MutableStateFlow(emptyList<User>()).asStateFlow()
+    suspend fun toggleService(serviceUnit: String) = withContext(Dispatchers.IO) {
+        _services.update { list ->
+            list.map { svc ->
+                if (svc.serviceUnit == serviceUnit) {
+                    val newState = if (svc.state == ServiceState.RUNNING) ServiceState.STOPPED else ServiceState.RUNNING
+                    svc.copy(
+                        state = newState,
+                        uptime = if (newState == ServiceState.RUNNING) "Active (running)" else "Inactive (dead)"
+                    )
+                } else svc
+            }
+        }
+    }
+
+    fun addUser(username: String, displayName: String, role: com.example.data.model.UserRole) {
+        val newUser = User(
+            id = "usr_${System.currentTimeMillis()}",
+            username = username.trim().lowercase(),
+            displayName = displayName.ifBlank { username },
+            role = role,
+            lastActive = "Never",
+            status = "Active"
+        )
+        _users.update { listOf(newUser) + it }
+    }
+
+    fun deleteUser(userId: String) {
+        _users.update { list -> list.filter { it.id != userId } }
+    }
+
+    suspend fun rebootServer() = withContext(Dispatchers.IO) {
+        _serverStatus.update { it.copy(isOnline = false, statusText = "Rebooting...") }
+        kotlinx.coroutines.delay(2000)
+        refreshServerStatus()
+    }
+
+    suspend fun shutdownServer() = withContext(Dispatchers.IO) {
+        _serverStatus.update { it.copy(isOnline = false, statusText = "Shutdown (Standby)") }
+    }
 
     override fun getStorageInfo(): Flow<StorageInfo> = _storageInfo.asStateFlow()
 
     override fun getRecentActivities(): Flow<List<RecentActivity>> = _recentActivities.asStateFlow()
+
+    private suspend fun refreshDashboardLists() = withContext(Dispatchers.IO) {
+        val api = ApiClient.getApiService() ?: return@withContext
+        try {
+            api.getServices().takeIf { it.isSuccessful }?.body()?.string()?.let { _services.value = parseServicesJson(it) }
+            api.getUsers().takeIf { it.isSuccessful }?.body()?.string()?.let { _users.value = parseUsersJson(it) }
+            api.getActivity().takeIf { it.isSuccessful }?.body()?.string()?.let { _recentActivities.value = parseActivityJson(it) }
+        } catch (e: Exception) { Log.w(TAG, "Dashboard lists refresh failed: ${e.message}") }
+    }
+
+    private fun parseServicesJson(json: String): List<ServiceStatus> {
+        val arr = JSONObject(json).optJSONObject("data")?.optJSONArray("items") ?: JSONObject(json).optJSONArray("items") ?: return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val state = when (o.optString("state").lowercase()) {
+                    "running", "active" -> ServiceState.RUNNING
+                    "stopped", "inactive", "failed" -> ServiceState.STOPPED
+                    else -> ServiceState.UNKNOWN
+                }
+                add(ServiceStatus(o.optString("name", o.optString("unit")), o.optString("unit"), state,
+                    if (o.has("port") && !o.isNull("port")) o.optInt("port") else null,
+                    o.optString("description", ""), o.optString("uptime", "Unavailable"), o.optInt("memory_usage_mb", 0)))
+            }
+        }
+    }
+
+    private fun parseUsersJson(json: String): List<User> {
+        val arr = JSONObject(json).optJSONObject("data")?.optJSONArray("items") ?: JSONObject(json).optJSONArray("items") ?: return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val role = if (o.optString("role").equals("admin", true)) com.example.data.model.UserRole.ADMIN else com.example.data.model.UserRole.USER
+                add(User(o.optString("id"), o.optString("username"), o.optString("display_name", o.optString("username")), role,
+                    o.optString("last_active", "Never"), o.optString("status", "Active")))
+            }
+        }
+    }
+
+    private fun parseActivityJson(json: String): List<RecentActivity> {
+        val arr = JSONObject(json).optJSONObject("data")?.optJSONArray("items") ?: JSONObject(json).optJSONArray("items") ?: return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val type = when (o.optString("type").lowercase()) {
+                    "video" -> FileType.VIDEO; "audio" -> FileType.AUDIO; "image" -> FileType.IMAGE; "folder" -> FileType.FOLDER
+                    "pdf" -> FileType.PDF; "document" -> FileType.DOCUMENT; "archive" -> FileType.ARCHIVE; else -> FileType.OTHER
+                }
+                add(RecentActivity(o.optString("id"), o.optString("title"), o.optString("type_name", type.name), o.optString("timestamp", ""), type, o.optString("size_text").ifBlank { null }))
+            }
+        }
+    }
+
+    override fun getServices(): Flow<List<ServiceStatus>> = _services.asStateFlow()
+    override fun getUsers(): Flow<List<User>> = _users.asStateFlow()
 
     override suspend fun toggleMediaFavorite(id: String): Boolean {
         val currentFavs = _favorites.value.toMutableSet()
@@ -785,6 +898,16 @@ object HttpServerRepository : ServerRepository {
             _recentActivities.value = list.subList(0, 20)
         } else {
             _recentActivities.value = list
+        }
+    }
+
+    suspend fun notifyFilesChanged(path: String = "/") {
+        try {
+            refreshStorageInfo()
+            refreshServerStatus()
+            refreshMediaCatalog()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error refreshing after file change: ${e.message}")
         }
     }
 }

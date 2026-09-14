@@ -3,6 +3,7 @@ package com.example.data.model
 enum class ServiceState(val label: String) {
     RUNNING("Running"),
     STOPPED("Stopped"),
+    RESTARTING("Restarting"),
     UNKNOWN("Unknown")
 }
 
@@ -12,6 +13,6 @@ data class ServiceStatus(
     val state: ServiceState,
     val port: Int? = null,
     val description: String,
-    val uptime: String = "14 days",
-    val memoryUsageMb: Int = 128
+    val uptime: String = "Unavailable",
+    val memoryUsageMb: Int = 0
 )

@@ -40,6 +40,9 @@ object ServerConfig {
     var readTimeoutSec: Long = 15L
     var writeTimeoutSec: Long = 15L
 
+    var appContext: Context? = null
+        private set
+
     private var sharedPreferences: SharedPreferences? = null
 
     private val _serverHost = MutableStateFlow("")
@@ -61,6 +64,7 @@ object ServerConfig {
     val connectionState: StateFlow<ServerConnectionState> = _connectionState.asStateFlow()
 
     fun initialize(context: Context) {
+        appContext = context.applicationContext
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         sharedPreferences = prefs
         val savedHost = prefs.getString(KEY_SERVER_HOST, "") ?: ""

@@ -48,6 +48,7 @@ import com.example.data.model.FileType
 import com.example.data.model.RecentActivity
 import com.example.ui.components.DemoModeBadge
 import com.example.ui.components.MediaCard
+import com.example.ui.components.MiniSystemDashboard
 import com.example.ui.components.QuickAccessCard
 import com.example.ui.components.SectionHeader
 import com.example.ui.components.ServerStatusCard
@@ -64,6 +65,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val serverStatus by viewModel.serverStatus.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     val recentActivities by viewModel.recentActivities.collectAsStateWithLifecycle()
 
@@ -105,10 +107,14 @@ fun HomeScreen(
             }
         }
 
-        // Server Status Card
+        // Mini System Dashboard (Storage, Memory, Temperature, System Status)
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                ServerStatusCard(serverStatus = serverStatus)
+                MiniSystemDashboard(
+                    serverStatus = serverStatus,
+                    isRefreshing = isRefreshing,
+                    onRefresh = { viewModel.refreshDashboard() }
+                )
             }
         }
 

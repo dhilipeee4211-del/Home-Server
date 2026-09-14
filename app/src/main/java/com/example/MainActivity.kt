@@ -14,6 +14,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.network.ServerConnectionManager.initialize(applicationContext)
+        com.example.data.repository.CloudDownloadManager.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {
             DhilipHomeTheme {

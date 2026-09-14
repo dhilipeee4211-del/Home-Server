@@ -3,6 +3,7 @@ package com.example.ui.screens.media
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ fun MediaDetailsScreen(
     mediaId: String,
     viewModel: MediaViewModel,
     onBackClick: () -> Unit,
+    onPlayClick: ((url: String, title: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val media by viewModel.getMediaById(mediaId).collectAsStateWithLifecycle(initialValue = null)
@@ -143,7 +145,12 @@ fun MediaDetailsScreen(
                                 .size(64.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primary)
-                                .align(Alignment.Center),
+                                .align(Alignment.Center)
+                                .clickable {
+                                    if (onPlayClick != null && item.streamUrl.isNotBlank()) {
+                                        onPlayClick(item.streamUrl, item.title)
+                                    }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -264,7 +271,9 @@ fun MediaDetailsScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    if (item.streamUrl.isNotBlank()) {
+                                    if (onPlayClick != null && item.streamUrl.isNotBlank()) {
+                                        onPlayClick(item.streamUrl, item.title)
+                                    } else if (item.streamUrl.isNotBlank()) {
                                         try {
                                             val mimeType = if (item.category == com.example.data.model.MediaCategory.MUSIC) "audio/*" else "video/*"
                                             val intent = Intent(Intent.ACTION_VIEW).apply {

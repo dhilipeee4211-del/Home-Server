@@ -45,7 +45,7 @@ data class ServerInfoResponse(
     @Json(name = "uptime") val uptime: String? = null,
     @Json(name = "server_time") val serverTime: String? = null
 ) {
-    val resolvedVersion: String get() = version ?: serverVersion ?: "0.1.0"
+    val resolvedVersion: String get() = version ?: serverVersion ?: "Unavailable"
 }
 
 @JsonClass(generateAdapter = true)
@@ -126,7 +126,7 @@ data class OsInfo(
         get() = when {
             legacyOperatingSystem.isNotBlank() -> legacyOperatingSystem
             distribution.isNotBlank() -> "$distribution ${version ?: ""}".trim()
-            else -> osName ?: "Debian GNU/Linux"
+            else -> osName ?: "Unavailable"
         }
 }
 
@@ -161,7 +161,7 @@ data class SystemInfoResponse(
             ?: temperatureC
             ?: cpu?.resolvedTemperature
             ?: thermal?.resolvedTemperature
-            ?: 42.0
+            ?: 0.0
 }
 
 @JsonClass(generateAdapter = true)

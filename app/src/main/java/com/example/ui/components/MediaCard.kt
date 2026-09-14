@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -51,6 +52,7 @@ fun MediaCard(
     isCompact: Boolean = true
 ) {
     val categoryIcon = when (media.category) {
+        MediaCategory.VIDEOS -> Icons.Default.VideoLibrary
         MediaCategory.MOVIES -> Icons.Default.Movie
         MediaCategory.TV_SHOWS -> Icons.Default.Tv
         MediaCategory.MUSIC -> Icons.Default.MusicNote

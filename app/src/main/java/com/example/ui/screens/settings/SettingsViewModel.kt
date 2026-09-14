@@ -130,6 +130,8 @@ class SettingsViewModel : ViewModel() {
                     ApiClient.authInterceptor.setToken(body.token)
                 }
                 checkAuthStatus()
+                // Login unlocks protected dashboard/file endpoints; refresh all server-backed data now.
+                HttpServerRepository.refreshServerStatus()
                 NetworkResult.Success(body)
             } else {
                 NetworkResult.parseServerError(res.errorBody()?.string(), res.code())

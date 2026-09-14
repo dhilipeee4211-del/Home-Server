@@ -30,7 +30,7 @@ data class DiscoveredServer(
     val ip: String,
     val port: Int = ServerConfig.DEFAULT_PORT,
     val name: String = "DhilipHome Server",
-    val version: String = "0.1.0"
+    val version: String = "Unavailable"
 )
 
 object ServerConnectionManager {
@@ -46,7 +46,7 @@ object ServerConnectionManager {
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
-    private val _serverVersion = MutableStateFlow<String?>("0.1.0")
+    private val _serverVersion = MutableStateFlow<String?>(null)
     val serverVersion: StateFlow<String?> = _serverVersion.asStateFlow()
 
     private val _serverName = MutableStateFlow<String?>("DhilipHome Server")
@@ -111,7 +111,7 @@ object ServerConnectionManager {
             if (response.isSuccessful) {
                 val health = response.body()
                 _isConnected.value = true
-                _serverVersion.value = health?.version ?: "0.1.0"
+                _serverVersion.value = health?.version
                 _serverName.value = health?.server ?: "DhilipHome Server"
                 _serverIp.value = ServerConfig.serverHost.value
                 _lastConnectionTime.value = System.currentTimeMillis()

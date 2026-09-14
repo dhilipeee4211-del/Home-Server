@@ -232,7 +232,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isConnected) "Connected (${serverVersion ?: "0.1.0"})" else "Offline",
+                                    text = if (isConnected) "Connected (${serverVersion ?: "Unavailable"})" else "Offline",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isConnected) StatusRunning else StatusWarning
@@ -455,11 +455,11 @@ fun SettingsScreen(
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                             ServerInfoRow(label = "Hostname", value = serverInfo?.hostname ?: inputHost)
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                            ServerInfoRow(label = "OS Distribution", value = serverInfo?.os ?: "Debian GNU/Linux")
+                            ServerInfoRow(label = "OS Distribution", value = serverInfo?.os ?: "Unavailable")
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                             ServerInfoRow(label = "Python Version", value = serverInfo?.pythonVersion ?: "Python 3.11+")
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                            ServerInfoRow(label = "Server Version", value = serverInfo?.serverVersion ?: serverVersion ?: "0.1.0")
+                            ServerInfoRow(label = "Server Version", value = serverInfo?.serverVersion ?: serverVersion ?: "Unavailable")
                             if (serverInfo?.uptime != null) {
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                                 ServerInfoRow(label = "Server Uptime", value = serverInfo?.uptime ?: "-")

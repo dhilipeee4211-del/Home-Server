@@ -40,6 +40,7 @@ import com.example.ui.screens.home.HomeViewModel
 import com.example.ui.screens.media.MediaDetailsScreen
 import com.example.ui.screens.media.MediaScreen
 import com.example.ui.screens.media.MediaViewModel
+import com.example.ui.screens.player.VlcMediaPlayerScreen
 import com.example.ui.screens.settings.SettingsScreen
 import com.example.ui.screens.settings.SettingsViewModel
 
@@ -164,7 +165,12 @@ fun DhilipHomeApp(
             }
 
             composable(Screen.Files.route) {
-                FilesScreen(viewModel = filesViewModel)
+                FilesScreen(
+                    viewModel = filesViewModel,
+                    onVideoClick = { url, title ->
+                        navController.navigate(Screen.Player.createRoute(url, title))
+                    }
+                )
             }
 
             composable(Screen.Media.route) {
@@ -184,7 +190,35 @@ fun DhilipHomeApp(
                 MediaDetailsScreen(
                     mediaId = mediaId,
                     viewModel = mediaViewModel,
-                    onBackClick = { navController.popBackStack() }
+                    onBackClick = { navController.popBackStack() },
+                    onPlayClick = { url, title ->
+                        navController.navigate(Screen.Player.createRoute(url, title))
+                    }
+                )
+            }
+
+            composable(
+                route = Screen.Player.route,
+                arguments = listOf(
+                    navArgument("url") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("title") {
+                        type = NavType.StringType
+                        defaultValue = "Media Player"
+                    }
+                )
+            ) { backStackEntry ->
+                val encodedUrl = backStackEntry.arguments?.getString("url") ?: ""
+                val encodedTitle = backStackEntry.arguments?.getString("title") ?: "Media Player"
+                val url = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                val title = java.net.URLDecoder.decode(encodedTitle, "UTF-8")
+
+                VlcMediaPlayerScreen(
+                    videoUrl = url,
+                    videoTitle = title,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
 

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
@@ -61,6 +62,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.components.ActiveCloudDownloadsCard
+import com.example.ui.components.CloudDownloadDialog
 import com.example.ui.components.EmptyState
 import com.example.ui.components.FileItemRow
 import com.example.ui.components.SectionHeader
@@ -69,17 +72,20 @@ import kotlinx.coroutines.launch
 @Composable
 fun FilesScreen(
     viewModel: FilesViewModel,
+    onVideoClick: ((url: String, title: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val currentPath by viewModel.currentPath.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val displayedFiles by viewModel.displayedFiles.collectAsStateWithLifecycle()
+    val cloudDownloads by viewModel.cloudDownloads.collectAsStateWithLifecycle()
 
     var isSearchActive by remember { mutableStateOf(false) }
     var isSortMenuOpen by remember { mutableStateOf(false) }
     var isMoreMenuOpen by remember { mutableStateOf(false) }
     var isFabMenuOpen by remember { mutableStateOf(false) }
+    var isCloudDownloadOpen by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -88,6 +94,19 @@ fun FilesScreen(
     // Handle back button when inside a folder
     BackHandler(enabled = currentPath != "/") {
         viewModel.navigateUp()
+    }
+
+    if (isCloudDownloadOpen) {
+        CloudDownloadDialog(
+            currentFolder = currentPath,
+            onDismiss = { isCloudDownloadOpen = false },
+            onStartDownload = { url, filename, dest ->
+                viewModel.startCloudDownload(url, filename, dest)
+                scope.launch {
+                    snackbarHostState.showSnackbar("Cloud download started: $filename")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -103,6 +122,33 @@ fun FilesScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.padding(bottom = 10.dp)
                     ) {
+                        // Cloud Web Download Action
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .clickable {
+                                    isFabMenuOpen = false
+                                    isCloudDownloadOpen = true
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                "Cloud Download",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = "Cloud Download",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
                         // New Folder Action
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -220,6 +266,14 @@ fun FilesScreen(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { isCloudDownloadOpen = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudDownload,
+                                    contentDescription = "Cloud Download",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
                             IconButton(onClick = { isSearchActive = !isSearchActive }) {
                                 Icon(
                                     imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
@@ -318,6 +372,17 @@ fun FilesScreen(
                 }
             }
 
+            // Active Cloud Downloads Card
+            if (cloudDownloads.isNotEmpty()) {
+                item {
+                    ActiveCloudDownloadsCard(
+                        tasks = cloudDownloads,
+                        onCancelTask = { viewModel.cancelCloudDownload(it) },
+                        onClearCompleted = { viewModel.clearCompletedDownloads() }
+                    )
+                }
+            }
+
             // Subfolders quick carousel if any folders exist
             val subfolders = displayedFiles.filter { it.isFolder }
             if (subfolders.isNotEmpty() && searchQuery.isEmpty()) {
@@ -373,6 +438,10 @@ fun FilesScreen(
                                     type = file.type
                                 )
                                 if (!file.downloadUrl.isNullOrBlank()) {
+                                    if (file.type == com.example.data.model.FileType.VIDEO && onVideoClick != null) {
+                                        onVideoClick(file.downloadUrl, file.name)
+                                        return@FileItemRow
+                                    }
                                     try {
                                         val mime = when (file.type) {
                                             com.example.data.model.FileType.VIDEO -> "video/*"

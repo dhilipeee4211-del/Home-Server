@@ -88,4 +88,13 @@ interface ApiService {
 
     @POST("api/media/scan")
     suspend fun triggerMediaScan(): Response<ResponseBody>
+
+    @GET("api/services")
+    suspend fun getServices(): Response<ResponseBody>
+
+    @GET("api/users")
+    suspend fun getUsers(): Response<ResponseBody>
+
+    @GET("api/activity")
+    suspend fun getActivity(): Response<ResponseBody>
 }

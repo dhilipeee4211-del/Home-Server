@@ -58,6 +58,7 @@ fun ServiceStatusCard(
     val (statusColor, statusBgColor) = when (service.state) {
         ServiceState.RUNNING -> Pair(StatusRunning, StatusRunning.copy(alpha = 0.12f))
         ServiceState.STOPPED -> Pair(StatusStopped, StatusStopped.copy(alpha = 0.12f))
+        ServiceState.RESTARTING -> Pair(StatusWarning, StatusWarning.copy(alpha = 0.18f))
         ServiceState.UNKNOWN -> Pair(StatusWarning, StatusWarning.copy(alpha = 0.12f))
     }
 

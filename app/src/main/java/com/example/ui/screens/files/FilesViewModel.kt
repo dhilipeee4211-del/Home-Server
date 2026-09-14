@@ -2,7 +2,9 @@ package com.example.ui.screens.files
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.CloudDownloadTask
 import com.example.data.model.FileItem
+import com.example.data.repository.CloudDownloadManager
 import com.example.domain.repository.ServerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,6 +21,7 @@ enum class FileSortOrder(val label: String) {
     SIZE_LARGEST("Size (Largest)")
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class FilesViewModel(
     private val repository: ServerRepository
 ) : ViewModel() {
@@ -33,6 +36,27 @@ class FilesViewModel(
 
     private val _sortOrder = MutableStateFlow(FileSortOrder.NAME_ASC)
     val sortOrder: StateFlow<FileSortOrder> = _sortOrder.asStateFlow()
+
+    val cloudDownloads: StateFlow<List<CloudDownloadTask>> = CloudDownloadManager.tasks
+
+    fun startCloudDownload(url: String, filename: String, destinationFolder: String) {
+        CloudDownloadManager.startDownload(
+            url = url,
+            destinationFolder = destinationFolder,
+            customFilename = filename,
+            onComplete = {
+                refresh()
+            }
+        )
+    }
+
+    fun cancelCloudDownload(taskId: String) {
+        CloudDownloadManager.cancelDownload(taskId)
+    }
+
+    fun clearCompletedDownloads() {
+        CloudDownloadManager.clearCompleted()
+    }
 
     val displayedFiles: StateFlow<List<FileItem>> = combine(
         combine(_currentPath, _refreshTrigger) { path, _ -> path }

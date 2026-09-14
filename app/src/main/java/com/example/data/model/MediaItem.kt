@@ -2,6 +2,7 @@ package com.example.data.model
 
 enum class MediaCategory(val displayName: String) {
     ALL("All"),
+    VIDEOS("Videos"),
     MOVIES("Movies"),
     TV_SHOWS("TV Shows"),
     MUSIC("Music"),
