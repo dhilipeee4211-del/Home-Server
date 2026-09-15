@@ -74,6 +74,11 @@ object CloudDownloadManager {
         loadPersistedTasks(appCtx)
         cleanStaleCacheFiles(appCtx)
         startServerSyncLoop()
+        // Downloads are server-owned; immediately rehydrate their current state.
+        scope.launch {
+            val baseUrl = getEffectiveBaseUrl()
+            if (baseUrl.isNotBlank()) syncWithServerTasks(baseUrl)
+        }
     }
 
     /**
@@ -119,7 +124,7 @@ object CloudDownloadManager {
         )
 
         _tasks.update { listOf(initialTask) + it }
-        // Cloud download state is authoritative on the server; do not persist this task locally.
+        savePersistedTasks()
 
         scope.launch {
             injectDownloadToServer(taskId, cleanUrl, filename, destinationFolder, onComplete)
@@ -301,8 +306,12 @@ object CloudDownloadManager {
             }
             activeJobs[taskId] = job
         } else {
+            // The task id is the persistent server job id. Retry/resume that job instead
+            // of creating a second download.
             scope.launch {
-                injectDownloadToServer(taskId, task.url, task.filename, task.destinationFolder, onComplete)
+                sendServerControlCommand(taskId, "resume")
+                syncWithServerTasks(getEffectiveBaseUrl())
+                onComplete?.invoke()
             }
         }
     }
@@ -389,6 +398,8 @@ object CloudDownloadManager {
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
 
+        // One canonical endpoint. Do not probe unrelated endpoints: a 404 from another
+        // endpoint must never be mistaken for a failed server download.
         val candidateEndpoints = listOf("/api/files/remote-download")
 
         val payload = JSONObject().apply {
@@ -433,7 +444,7 @@ object CloudDownloadManager {
                 it.copy(
                     id = serverAssignedId ?: it.id,
                     status = CloudDownloadStatus.DOWNLOADING,
-                    speedText = "Server-side download in progress...",
+                    speedText = "Server download queued…",
                     progressPercent = 0
                 )
             }
@@ -462,11 +473,11 @@ object CloudDownloadManager {
             .readTimeout(8, TimeUnit.SECONDS)
             .build()
 
-        val endpoint = when (action) {
-            "pause" -> "/api/files/remote-download/pause"
-            "resume" -> "/api/files/remote-download/resume"
-            "cancel" -> "/api/files/remote-download/cancel"
-            else -> return
+        val endpoints = when (action) {
+            "pause" -> listOf("/api/files/remote-download/pause")
+            "resume" -> listOf("/api/files/remote-download/resume")
+            "cancel" -> listOf("/api/files/remote-download/cancel")
+            else -> emptyList()
         }
 
         val payload = JSONObject().apply {
@@ -475,10 +486,17 @@ object CloudDownloadManager {
             put("action", action)
         }.toString().toRequestBody("application/json".toMediaTypeOrNull())
 
-        try {
-            val req = Request.Builder().url("$baseUrl$endpoint").header("Authorization", "Bearer ${ApiClient.authInterceptor.getToken().orEmpty()}").post(payload).build()
-            client.newCall(req).execute().use { }
-        } catch (_: Exception) {}
+        for (ep in endpoints) {
+            try {
+                val req = Request.Builder()
+                    .url("$baseUrl$ep")
+                    .header("Authorization", "Bearer ${ApiClient.authInterceptor.getToken().orEmpty()}")
+                    .post(payload)
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (resp.isSuccessful) break
+            } catch (_: Exception) {}
+        }
         syncWithServerTasks(baseUrl)
     }
 
@@ -859,6 +877,10 @@ object CloudDownloadManager {
     /**
      * Atomically saves tasks to internal files storage so state survives sudden close or crash.
      */
+    /**
+     * Only Android-originated uploads may be persisted locally.
+     * Server downloads are authoritative on the server and are rehydrated from its API.
+     */
     private fun savePersistedTasks() {
         val appCtx = appContext ?: return
         try {
@@ -877,71 +899,71 @@ object CloudDownloadManager {
                     put("status", t.status.name)
                     put("errorMessage", t.errorMessage ?: "")
                     put("timestamp", t.timestamp)
-                    put("isUpload", t.isUpload)
+                    put("isUpload", true)
                     put("tempCachePath", t.tempCachePath ?: "")
                 }
                 jsonArray.put(obj)
             }
             file.writeText(jsonArray.toString())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to persist transfer tasks: ${e.message}")
+            Log.e(TAG, "Failed to persist upload tasks: ${e.message}")
         }
     }
 
     /**
-     * Loads tasks from internal files storage and restores interrupted tasks as PAUSED.
+     * Restores only uploads. Server-side downloads are never restored from Android storage.
      */
     private fun loadPersistedTasks(context: Context) {
         try {
             val file = File(context.filesDir, PERSISTENCE_FILE_NAME)
             if (!file.exists()) return
-
             val content = file.readText()
             if (content.isBlank()) return
 
             val jsonArray = JSONArray(content)
             val restoredList = mutableListOf<CloudDownloadTask>()
-
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
+                if (!obj.optBoolean("isUpload", false)) continue
+
                 val rawStatus = obj.optString("status", CloudDownloadStatus.QUEUED.name)
                 var status = try {
                     CloudDownloadStatus.valueOf(rawStatus)
                 } catch (_: Exception) {
                     CloudDownloadStatus.QUEUED
                 }
-
                 var speedText = obj.optString("speedText", "")
-
-                // If app crashed or was suddenly closed while transferring, restore as PAUSED so user can resume!
-                if (status == CloudDownloadStatus.DOWNLOADING || status == CloudDownloadStatus.STORING_TO_SERVER || status == CloudDownloadStatus.QUEUED) {
+                if (status == CloudDownloadStatus.DOWNLOADING ||
+                    status == CloudDownloadStatus.STORING_TO_SERVER ||
+                    status == CloudDownloadStatus.QUEUED) {
                     status = CloudDownloadStatus.PAUSED
                     speedText = "Interrupted (App Closed) • Tap Resume"
                 }
 
-                if (!obj.optBoolean("isUpload", false)) continue
-
-                val task = CloudDownloadTask(
-                    id = obj.optString("id", UUID.randomUUID().toString()),
-                    url = obj.optString("url", ""),
-                    filename = obj.optString("filename", "file"),
-                    destinationFolder = obj.optString("destinationFolder", "/"),
-                    progressPercent = obj.optInt("progressPercent", 0),
-                    downloadedBytes = obj.optLong("downloadedBytes", 0L),
-                    totalBytes = obj.optLong("totalBytes", 0L),
-                    speedText = speedText,
-                    status = status,
-                    errorMessage = obj.optString("errorMessage", "").takeIf { it.isNotBlank() },
-                    timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                    isUpload = obj.optBoolean("isUpload", false),
-                    tempCachePath = obj.optString("tempCachePath", "").takeIf { it.isNotBlank() }
+                restoredList.add(
+                    CloudDownloadTask(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        url = obj.optString("url", ""),
+                        filename = obj.optString("filename", "file"),
+                        destinationFolder = obj.optString("destinationFolder", "/"),
+                        progressPercent = obj.optInt("progressPercent", 0),
+                        downloadedBytes = obj.optLong("downloadedBytes", 0L),
+                        totalBytes = obj.optLong("totalBytes", 0L),
+                        speedText = speedText,
+                        status = status,
+                        errorMessage = obj.optString("errorMessage", "").takeIf { it.isNotBlank() },
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        isUpload = true,
+                        tempCachePath = obj.optString("tempCachePath", "").takeIf { it.isNotBlank() }
+                    )
                 )
-                restoredList.add(task)
             }
-
-            _tasks.value = restoredList
+            _tasks.update { current ->
+                val serverDownloads = current.filter { !it.isUpload }
+                restoredList + serverDownloads
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load persisted transfer tasks: ${e.message}")
+            Log.e(TAG, "Failed to load persisted upload tasks: ${e.message}")
         }
     }
 
