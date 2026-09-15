@@ -20,12 +20,3 @@ View your app in AI Studio: https://ai.studio/apps/cfb46ad9-a5b8-492a-9ff0-02743
 5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
 6. Run the app on an emulator or physical device
 7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
-
-
-## Server-authoritative cloud downloads
-
-Cloud downloads are created and controlled through the DhilipHome Server API. The Android
-client does not download remote file bytes and does not persist cloud-download state as
-the source of truth. After startup/cache clearing it rehydrates download jobs from the
-server. Uploads may still use Android temporary cache because uploads originate on the
-device.

@@ -6,8 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,32 +24,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.UploadFile
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,9 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,16 +57,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.model.FileItem
-import com.example.data.model.FileType
-import com.example.data.repository.HttpServerRepository
-import com.example.network.ServerConfig
 import com.example.ui.components.ActiveCloudDownloadsCard
 import com.example.ui.components.CloudDownloadDialog
 import com.example.ui.components.EmptyState
@@ -99,42 +80,22 @@ fun FilesScreen(
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val displayedFiles by viewModel.displayedFiles.collectAsStateWithLifecycle()
     val cloudDownloads by viewModel.cloudDownloads.collectAsStateWithLifecycle()
-    val allTransfers by viewModel.allTransfers.collectAsStateWithLifecycle()
-    val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
-    val uploadStatus by viewModel.uploadStatus.collectAsStateWithLifecycle()
 
     var isSearchActive by remember { mutableStateOf(false) }
     var isSortMenuOpen by remember { mutableStateOf(false) }
     var isMoreMenuOpen by remember { mutableStateOf(false) }
     var isFabMenuOpen by remember { mutableStateOf(false) }
     var isCloudDownloadOpen by remember { mutableStateOf(false) }
-    var isCreateFolderOpen by remember { mutableStateOf(false) }
-    var selectedItemForOptions by remember { mutableStateOf<FileItem?>(null) }
-    var itemToDelete by remember { mutableStateOf<FileItem?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    // System File Picker for uploading files to the current server folder
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            viewModel.uploadFiles(context, uris) { total, _ ->
-                scope.launch {
-                    snackbarHostState.showSnackbar("Queued $total upload(s) with live progress & pause/resume")
-                }
-            }
-        }
-    }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // Handle back button when inside a folder
     BackHandler(enabled = currentPath != "/") {
         viewModel.navigateUp()
     }
 
-    // Cloud Web Download Dialog
     if (isCloudDownloadOpen) {
         CloudDownloadDialog(
             currentFolder = currentPath,
@@ -143,94 +104,6 @@ fun FilesScreen(
                 viewModel.startCloudDownload(url, filename, dest)
                 scope.launch {
                     snackbarHostState.showSnackbar("Cloud download started: $filename")
-                }
-            }
-        )
-    }
-
-    // Create Folder Dialog
-    if (isCreateFolderOpen) {
-        CreateFolderDialog(
-            currentPath = currentPath,
-            onDismiss = { isCreateFolderOpen = false },
-            onConfirm = { folderName ->
-                isCreateFolderOpen = false
-                viewModel.createFolder(folderName) { success, msg ->
-                    scope.launch { snackbarHostState.showSnackbar(msg) }
-                }
-            }
-        )
-    }
-
-    // File / Folder Options Dialog
-    if (selectedItemForOptions != null) {
-        val item = selectedItemForOptions!!
-        FileOptionsDialog(
-            item = item,
-            onDismiss = { selectedItemForOptions = null },
-            onDownloadToDevice = {
-                selectedItemForOptions = null
-                val ok = viewModel.downloadFileToDevice(context, item)
-                scope.launch {
-                    if (ok) {
-                        snackbarHostState.showSnackbar("Downloading ${item.name} to Downloads folder...")
-                    } else {
-                        snackbarHostState.showSnackbar("Download request failed")
-                    }
-                }
-            },
-            onOpenStream = {
-                selectedItemForOptions = null
-                openFileWithIntent(context, item, onVideoClick, scope, snackbarHostState)
-            },
-            onCopyLink = {
-                selectedItemForOptions = null
-                val link = item.downloadUrl ?: "http://${ServerConfig.serverHost.value}:${ServerConfig.serverPort.value}/api/files/download?path=${item.path}"
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                clipboard?.setPrimaryClip(ClipData.newPlainText("Server Link", link))
-                scope.launch {
-                    snackbarHostState.showSnackbar("Link copied to clipboard")
-                }
-            },
-            onDelete = {
-                selectedItemForOptions = null
-                itemToDelete = item
-            }
-        )
-    }
-
-    // Delete Confirmation Dialog
-    if (itemToDelete != null) {
-        val item = itemToDelete!!
-        AlertDialog(
-            onDismissRequest = { itemToDelete = null },
-            title = {
-                Text(
-                    text = if (item.isFolder) "Delete Folder?" else "Delete File?",
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = "Are you sure you want to permanently delete \"${item.name}\" from the server?"
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        itemToDelete = null
-                        viewModel.deleteItem(item) { success, msg ->
-                            scope.launch { snackbarHostState.showSnackbar(msg) }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.onError)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { itemToDelete = null }) {
-                    Text("Cancel")
                 }
             }
         )
@@ -276,42 +149,17 @@ fun FilesScreen(
                             )
                         }
 
-                        // Upload Files Action
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable {
-                                    isFabMenuOpen = false
-                                    filePickerLauncher.launch("*/*")
-                                }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                "Upload Files",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.UploadFile,
-                                contentDescription = "Upload Files",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
                         // New Folder Action
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(24.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .background(MaterialTheme.colorScheme.surface)
                                 .clickable {
                                     isFabMenuOpen = false
-                                    isCreateFolderOpen = true
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Create Folder: Coming in v0.4")
+                                    }
                                 }
                                 .padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
@@ -319,12 +167,41 @@ fun FilesScreen(
                                 "New Folder",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Icon(
                                 imageVector = Icons.Default.CreateNewFolder,
                                 contentDescription = "New Folder",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Upload Action
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .clickable {
+                                    isFabMenuOpen = false
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("File Upload: Coming in v0.4")
+                                    }
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                "Upload File",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.UploadFile,
+                                contentDescription = "Upload",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -364,10 +241,7 @@ fun FilesScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f, fill = false)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             if (currentPath != "/") {
                                 IconButton(onClick = { viewModel.navigateUp() }) {
                                     Icon(
@@ -386,39 +260,12 @@ fun FilesScreen(
                                 Text(
                                     text = "storage: $currentPath",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Quick Upload Button
-                            IconButton(
-                                onClick = { filePickerLauncher.launch("*/*") },
-                                modifier = Modifier.testTag("quick_upload_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.UploadFile,
-                                    contentDescription = "Upload Files",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-
-                            // Quick Create Folder Button
-                            IconButton(
-                                onClick = { isCreateFolderOpen = true },
-                                modifier = Modifier.testTag("quick_create_folder_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CreateNewFolder,
-                                    contentDescription = "New Folder",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-
-                            // Cloud Web Download Button
                             IconButton(onClick = { isCloudDownloadOpen = true }) {
                                 Icon(
                                     imageVector = Icons.Default.CloudDownload,
@@ -427,7 +274,6 @@ fun FilesScreen(
                                 )
                             }
 
-                            // Search Button
                             IconButton(onClick = { isSearchActive = !isSearchActive }) {
                                 Icon(
                                     imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
@@ -435,7 +281,6 @@ fun FilesScreen(
                                 )
                             }
 
-                            // Sort Menu
                             Box {
                                 IconButton(onClick = { isSortMenuOpen = true }) {
                                     Icon(
@@ -465,7 +310,6 @@ fun FilesScreen(
                                 }
                             }
 
-                            // More Menu
                             Box {
                                 IconButton(onClick = { isMoreMenuOpen = true }) {
                                     Icon(
@@ -478,30 +322,22 @@ fun FilesScreen(
                                     onDismissRequest = { isMoreMenuOpen = false }
                                 ) {
                                     DropdownMenuItem(
+                                        text = { Text("Server: ${com.example.network.ServerConfig.baseUrl.value.ifBlank { "Not configured" }}") },
+                                        onClick = {
+                                            isMoreMenuOpen = false
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Target: ${com.example.network.ServerConfig.baseUrl.value.ifBlank { "Configure in Settings" }}")
+                                            }
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Refresh list") },
-                                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
                                         onClick = {
                                             isMoreMenuOpen = false
                                             viewModel.refresh()
                                             scope.launch {
                                                 snackbarHostState.showSnackbar("Refreshing from server...")
                                             }
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Upload files") },
-                                        leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) },
-                                        onClick = {
-                                            isMoreMenuOpen = false
-                                            filePickerLauncher.launch("*/*")
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("New folder") },
-                                        leadingIcon = { Icon(Icons.Default.CreateNewFolder, contentDescription = null) },
-                                        onClick = {
-                                            isMoreMenuOpen = false
-                                            isCreateFolderOpen = true
                                         }
                                     )
                                 }
@@ -536,56 +372,13 @@ fun FilesScreen(
                 }
             }
 
-            // Active Uploading Banner
-            if (isUploading) {
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.5.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = "Uploading to DhilipHome Server",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                                Text(
-                                    text = uploadStatus ?: "Transferring...",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Active Transfers Card (Downloads & Uploads with Pause / Resume / Persistence)
-            if (allTransfers.isNotEmpty()) {
+            // Active Cloud Downloads Card
+            if (cloudDownloads.isNotEmpty()) {
                 item {
                     ActiveCloudDownloadsCard(
-                        tasks = allTransfers,
+                        tasks = cloudDownloads,
                         onCancelTask = { viewModel.cancelCloudDownload(it) },
-                        onPauseTask = { viewModel.pauseTransfer(it) },
-                        onResumeTask = { viewModel.resumeTransfer(it) },
-                        onRetryTask = { viewModel.retryTransfer(it) },
-                        onClearCompleted = { viewModel.clearCompletedDownloads() },
-                        onPauseAll = { viewModel.pauseAllTransfers() },
-                        onResumeAll = { viewModel.resumeAllTransfers() }
+                        onClearCompleted = { viewModel.clearCompletedDownloads() }
                     )
                 }
             }
@@ -627,7 +420,7 @@ fun FilesScreen(
                         description = if (searchQuery.isNotEmpty()) {
                             "No results matching \"$searchQuery\" in $currentPath"
                         } else {
-                            "No files found at $currentPath on ${ServerConfig.baseUrl.value.ifBlank { "server" }}.\nTap '+' to upload files or create folders."
+                            "No files found at $currentPath on ${com.example.network.ServerConfig.baseUrl.value.ifBlank { "server" }}.\nEnsure server is online and reachable on local Wi-Fi."
                         }
                     )
                 }
@@ -639,65 +432,64 @@ fun FilesScreen(
                             if (file.isFolder) {
                                 viewModel.navigateToFolder(file.path)
                             } else {
-                                HttpServerRepository.recordActivity(
+                                com.example.data.repository.HttpServerRepository.recordActivity(
                                     title = file.name,
                                     subtitle = file.formattedSize ?: "Opened file",
                                     type = file.type
                                 )
-                                openFileWithIntent(context, file, onVideoClick, scope, snackbarHostState)
+                                if (!file.downloadUrl.isNullOrBlank()) {
+                                    if (file.type == com.example.data.model.FileType.VIDEO && onVideoClick != null) {
+                                        onVideoClick(file.downloadUrl, file.name)
+                                        return@FileItemRow
+                                    }
+                                    try {
+                                        val mime = when (file.type) {
+                                            com.example.data.model.FileType.VIDEO -> "video/*"
+                                            com.example.data.model.FileType.AUDIO -> "audio/*"
+                                            com.example.data.model.FileType.IMAGE -> "image/*"
+                                            com.example.data.model.FileType.PDF -> "application/pdf"
+                                            else -> "*/*"
+                                        }
+                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(Uri.parse(file.downloadUrl), mime)
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(file.downloadUrl)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(browserIntent)
+                                        } catch (e2: Exception) {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Opening: ${file.downloadUrl}")
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Selected: ${file.name}")
+                                    }
+                                }
                             }
                         },
                         onMoreClick = {
-                            selectedItemForOptions = file
+                            if (!file.downloadUrl.isNullOrBlank()) {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                val clip = ClipData.newPlainText("File URL", file.downloadUrl)
+                                clipboard?.setPrimaryClip(clip)
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Copied link: ${file.downloadUrl}")
+                                }
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("${file.name} • ${file.formattedSize ?: "File"}")
+                                }
+                            }
                         }
                     )
                 }
-            }
-        }
-    }
-}
-
-private fun openFileWithIntent(
-    context: Context,
-    file: FileItem,
-    onVideoClick: ((url: String, title: String) -> Unit)?,
-    scope: kotlinx.coroutines.CoroutineScope,
-    snackbarHostState: SnackbarHostState
-) {
-    if (file.downloadUrl.isNullOrBlank()) {
-        scope.launch {
-            snackbarHostState.showSnackbar("Selected: ${file.name}")
-        }
-        return
-    }
-
-    if (file.type == FileType.VIDEO && onVideoClick != null) {
-        onVideoClick(file.downloadUrl, file.name)
-        return
-    }
-
-    try {
-        val mime = when (file.type) {
-            FileType.VIDEO -> "video/*"
-            FileType.AUDIO -> "audio/*"
-            FileType.IMAGE -> "image/*"
-            FileType.PDF -> "application/pdf"
-            else -> "*/*"
-        }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(Uri.parse(file.downloadUrl), mime)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    } catch (e: Exception) {
-        try {
-            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(file.downloadUrl)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(browserIntent)
-        } catch (e2: Exception) {
-            scope.launch {
-                snackbarHostState.showSnackbar("Opening: ${file.downloadUrl}")
             }
         }
     }
@@ -729,201 +521,5 @@ private fun QuickFolderChip(
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface
         )
-    }
-}
-
-@Composable
-private fun CreateFolderDialog(
-    currentPath: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var folderName by remember { mutableStateOf("") }
-    var isError by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.CreateNewFolder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text("Create New Folder", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "In directory: $currentPath",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = folderName,
-                    onValueChange = {
-                        folderName = it
-                        if (it.isNotBlank()) isError = false
-                    },
-                    label = { Text("Folder Name") },
-                    placeholder = { Text("e.g. Documents, Movies") },
-                    singleLine = true,
-                    isError = isError,
-                    supportingText = if (isError) {
-                        { Text("Please enter a folder name") }
-                    } else null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("create_folder_input")
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (folderName.isBlank()) {
-                        isError = true
-                    } else {
-                        onConfirm(folderName.trim())
-                    }
-                },
-                modifier = Modifier.testTag("create_folder_confirm_button")
-            ) {
-                Text("Create")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-private fun FileOptionsDialog(
-    item: FileItem,
-    onDismiss: () -> Unit,
-    onDownloadToDevice: () -> Unit,
-    onOpenStream: () -> Unit,
-    onCopyLink: () -> Unit,
-    onDelete: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (item.isFolder) Icons.Default.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = item.formattedSize ?: if (item.isFolder) "Folder" else "File",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                HorizontalDivider(modifier = Modifier.padding(bottom = 8.dp))
-
-                // Download to Device (for files)
-                if (!item.isFolder) {
-                    OptionRow(
-                        icon = Icons.Default.Download,
-                        title = "Download to Phone Storage",
-                        subtitle = "Save directly to device Downloads",
-                        onClick = onDownloadToDevice
-                    )
-                }
-
-                // Open / Stream
-                if (!item.isFolder) {
-                    OptionRow(
-                        icon = Icons.Default.OpenInNew,
-                        title = "Open / Stream",
-                        subtitle = "Launch in external player or viewer",
-                        onClick = onOpenStream
-                    )
-                }
-
-                // Copy Link
-                OptionRow(
-                    icon = Icons.Default.ContentCopy,
-                    title = "Copy Server Link",
-                    subtitle = "Copy direct HTTP address to clipboard",
-                    onClick = onCopyLink
-                )
-
-                // Delete from Server
-                OptionRow(
-                    icon = Icons.Default.Delete,
-                    title = "Delete from Server",
-                    subtitle = "Permanently remove from DhilipHome",
-                    isDestructive = true,
-                    onClick = onDelete
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-private fun OptionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    isDestructive: Boolean = false,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = title,
-            tint = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(22.dp)
-        )
-        Spacer(modifier = Modifier.width(14.dp))
-        Column {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
     }
 }
