@@ -18,7 +18,7 @@ android {
     minSdk = 26
     targetSdk = 36
     versionCode = 3
-    versionName = "0.2.1"
+    versionName = "0.3.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -117,6 +117,8 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  implementation(libs.media3.exoplayer)
+  implementation(libs.media3.ui)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)

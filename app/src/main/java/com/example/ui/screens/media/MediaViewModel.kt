@@ -81,4 +81,22 @@ class MediaViewModel(
     }
 
     fun getMediaById(id: String) = repository.getMediaById(id)
+
+    fun deleteMedia(item: MediaItem, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = repository.deleteFile(item.filePath)
+            if (ok) refreshMedia()
+            onResult(ok)
+        }
+    }
+
+    fun renameMedia(item: MediaItem, newName: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val extension = item.filePath.substringAfterLast('.', "").takeIf { it.isNotBlank() }
+            val name = if (extension != null && !newName.contains('.')) "$newName.$extension" else newName
+            val ok = repository.renameFile(item.filePath, name)
+            if (ok) refreshMedia()
+            onResult(ok)
+        }
+    }
 }

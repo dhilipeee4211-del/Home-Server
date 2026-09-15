@@ -83,21 +83,17 @@ object ApiClient {
             .split("/")
             .joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
         val token = authInterceptor.getToken()
-        val authQuery = if (!token.isNullOrBlank()) "&token=${java.net.URLEncoder.encode(token, "UTF-8")}" else ""
-        return "$baseUrl/api/media/stream/$encodedPath?source=dhiliphome$authQuery"
+        return if (!token.isNullOrBlank()) "$baseUrl/api/media/stream/$encodedPath?token=${java.net.URLEncoder.encode(token, "UTF-8")}" else "$baseUrl/api/media/stream/$encodedPath"
     }
 
     /**
-     * Constructs a direct file download URL. MediaPlayer/Android external
-     * players cannot use OkHttp's Authorization interceptor, so the server
-     * accepts the short-lived auth token as a query parameter.
+     * Constructs a direct file download URL
      */
     fun getDownloadUrl(filePath: String): String {
         val baseUrl = ServerConfig.baseUrl.value.trimEnd('/')
         val encodedPath = java.net.URLEncoder.encode(filePath, "UTF-8")
         val token = authInterceptor.getToken()
-        val authQuery = if (!token.isNullOrBlank()) "&token=${java.net.URLEncoder.encode(token, "UTF-8")}" else ""
-        return "$baseUrl/api/files/download?path=$encodedPath$authQuery"
+        return if (!token.isNullOrBlank()) "$baseUrl/api/files/download?path=$encodedPath&token=${java.net.URLEncoder.encode(token, "UTF-8")}" else "$baseUrl/api/files/download?path=$encodedPath"
     }
 
     /**

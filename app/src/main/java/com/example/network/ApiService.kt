@@ -78,10 +78,10 @@ interface ApiService {
     suspend fun deleteFile(@Query("path") path: String): Response<ResponseBody>
 
     @POST("api/files/rename")
-    suspend fun renameFile(@Body request: com.example.network.models.RenameFileRequest): Response<ResponseBody>
+    suspend fun renameFile(@Body request: RenameFileRequest): Response<ResponseBody>
 
-    @POST("api/files/remote-download/{taskId}/cancel")
-    suspend fun cancelRemoteDownload(@retrofit2.http.Path("taskId") taskId: String): Response<ResponseBody>
+    @POST("api/files/remote-download/cancel")
+    suspend fun cancelRemoteDownload(@Body request: RemoteDownloadCancelRequest): Response<ResponseBody>
 
     @GET("api/media")
     suspend fun getMedia(@Query("category") category: String? = null): Response<ResponseBody>

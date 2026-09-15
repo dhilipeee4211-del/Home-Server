@@ -17,6 +17,7 @@ import com.example.network.ApiClient
 import com.example.network.ServerConfig
 import com.example.network.ServerConnectionManager
 import com.example.network.models.CreateFolderRequest
+import com.example.network.models.RenameFileRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -495,50 +496,18 @@ object HttpServerRepository : ServerRepository {
         return files.sortedWith(compareBy<FileItem> { !it.isFolder }.thenBy { it.name.lowercase() })
     }
 
-    suspend fun createFolder(folderPath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun createFolder(parentPath: String, name: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
-            val safe = sanitizePath(folderPath)
-            val name = safe.trimEnd('/').substringAfterLast('/')
-            val parent = safe.trimEnd('/').substringBeforeLast('/', "").trimStart('/')
-            val res = api.createFolder(CreateFolderRequest(name = name, path = parent))
-            res.isSuccessful
+            val safeParent = sanitizePath(parentPath)
+            api.createFolder(CreateFolderRequest(name = name.trim(), path = safeParent.trimStart('/'))).isSuccessful
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create folder: ${e.message}")
             false
         }
     }
 
-    override suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
-        val api = ApiClient.getApiService() ?: return@withContext false
-        try {
-            val safePath = sanitizePath(filePath)
-            val res = api.deleteFile(path = safePath)
-            res.isSuccessful
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete file: ${e.message}")
-            false
-        }
-    }
-
-    override suspend fun renameFile(path: String, newName: String): Boolean = withContext(Dispatchers.IO) {
-        val api = ApiClient.getApiService() ?: return@withContext false
-        try {
-            val safePath = sanitizePath(path)
-            val res = api.renameFile(
-                com.example.network.models.RenameFileRequest(
-                    path = safePath,
-                    name = newName.trim()
-                )
-            )
-            res.isSuccessful
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to rename item: ${e.message}")
-            false
-        }
-    }
-
-    suspend fun uploadFile(file: File, destinationFolder: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun uploadFile(file: File, destinationFolder: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
             val safeFolder = sanitizePath(destinationFolder)
@@ -878,6 +847,26 @@ object HttpServerRepository : ServerRepository {
 
     override fun getServices(): Flow<List<ServiceStatus>> = _services.asStateFlow()
     override fun getUsers(): Flow<List<User>> = _users.asStateFlow()
+
+    override suspend fun deleteFile(path: String): Boolean = withContext(Dispatchers.IO) {
+        val api = ApiClient.getApiService() ?: return@withContext false
+        try {
+            api.deleteFile(sanitizePath(path)).isSuccessful
+        } catch (e: Exception) {
+            Log.e(TAG, "Delete failed: ${e.message}")
+            false
+        }
+    }
+
+    override suspend fun renameFile(path: String, newName: String): Boolean = withContext(Dispatchers.IO) {
+        val api = ApiClient.getApiService() ?: return@withContext false
+        try {
+            api.renameFile(RenameFileRequest(sanitizePath(path), newName.trim())).isSuccessful
+        } catch (e: Exception) {
+            Log.e(TAG, "Rename failed: ${e.message}")
+            false
+        }
+    }
 
     override suspend fun toggleMediaFavorite(id: String): Boolean {
         val currentFavs = _favorites.value.toMutableSet()

@@ -25,4 +25,6 @@ interface ServerRepository {
     suspend fun toggleMediaFavorite(id: String): Boolean
     suspend fun deleteFile(path: String): Boolean
     suspend fun renameFile(path: String, newName: String): Boolean
+    suspend fun createFolder(parentPath: String, name: String): Boolean
+    suspend fun uploadFile(file: java.io.File, destinationFolder: String): Boolean
 }

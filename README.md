@@ -1,31 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# DhilipHome Android 0.3.0
 
-# Run and deploy your AI Studio app
+Production-oriented Android/Android TV client for the DhilipHome private server.
 
-This contains everything you need to run your app locally.
+## Highlights
 
-View your app in AI Studio: https://ai.studio/apps/cfb46ad9-a5b8-492a-9ff0-02743b3f15e9
+- Server-authoritative cloud downloads with real speed/progress and cancellation
+- Media3/ExoPlayer streaming with HTTP Range support
+- Glass-style transparent player controls
+- Files list/grid modes
+- Upload and create-folder actions
+- Admin-only rename/delete controls
+- Android TV D-pad compatible navigation
 
-## Run Locally
+## Build
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+Open the `Android` directory in Android Studio with a current Android SDK. The project targets SDK 36 and uses Kotlin/Compose.
 
-
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
-
-
-## Server-authoritative cloud downloads
-
-Cloud downloads are created and controlled through the DhilipHome Server API. The Android
-client does not download remote file bytes and does not persist cloud-download state as
-the source of truth. After startup/cache clearing it rehydrates download jobs from the
-server. Uploads may still use Android temporary cache because uploads originate on the
-device.
+Set the required `.env` values from `.env.example` before a release build. Do not commit production secrets or keystores.

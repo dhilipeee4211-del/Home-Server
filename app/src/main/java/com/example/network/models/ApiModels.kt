@@ -271,6 +271,18 @@ data class CreateFolderRequest(
     @Json(name = "path") val path: String = ""
 )
 
+
+@JsonClass(generateAdapter = true)
+data class RenameFileRequest(
+    @Json(name = "path") val path: String,
+    @Json(name = "new_name") val newName: String
+)
+
+@JsonClass(generateAdapter = true)
+data class RemoteDownloadCancelRequest(
+    @Json(name = "task_id") val taskId: String
+)
+
 @JsonClass(generateAdapter = true)
 data class MediaResponseItem(
     @Json(name = "id") val id: String? = null,
@@ -282,11 +294,4 @@ data class MediaResponseItem(
     @Json(name = "thumbnail_url") val thumbnailUrl: String? = null,
     @Json(name = "stream_url") val streamUrl: String? = null,
     @Json(name = "modified") val modified: String? = null
-)
-
-
-@JsonClass(generateAdapter = true)
-data class RenameFileRequest(
-    @Json(name = "path") val path: String,
-    @Json(name = "name") val name: String
 )

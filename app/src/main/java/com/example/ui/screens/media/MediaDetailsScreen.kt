@@ -56,7 +56,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.ui.components.DemoModeBadge
 import com.example.ui.components.EmptyState
 import kotlinx.coroutines.launch
 
@@ -136,7 +135,7 @@ fun MediaDetailsScreen(
                                 )
                             }
 
-                            DemoModeBadge(text = "STREAMING IN v0.5")
+
                         }
 
                         // Center Play watermark icon
