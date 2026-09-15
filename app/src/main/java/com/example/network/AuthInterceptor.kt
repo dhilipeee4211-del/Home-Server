@@ -56,6 +56,6 @@ class AuthInterceptor : Interceptor {
     companion object {
         private const val PREFS_NAME = "dhiliphome_auth_prefs"
         private const val KEY_AUTH_TOKEN = "auth_token"
-        const val USER_AGENT = "DhilipHome-Android/0.1.0"
+        const val USER_AGENT = "DhilipHome-Android/0.2.1"
     }
 }

@@ -283,3 +283,10 @@ data class MediaResponseItem(
     @Json(name = "stream_url") val streamUrl: String? = null,
     @Json(name = "modified") val modified: String? = null
 )
+
+
+@JsonClass(generateAdapter = true)
+data class RenameFileRequest(
+    @Json(name = "path") val path: String,
+    @Json(name = "name") val name: String
+)

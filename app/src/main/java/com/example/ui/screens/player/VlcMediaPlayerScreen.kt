@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -79,8 +80,8 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 // VLC Signature Color Palette
-private val VlcOrange = Color(0xFFFF8800)
-private val VlcOrangeLight = Color(0xFFFFAA33)
+private val VlcOrange = Color(0xFF38BDF8)
+private val VlcOrangeLight = Color(0xFF7DD3FC)
 private val VlcDarkBackground = Color(0xFF0D0E11)
 
 enum class AspectRatioMode(val label: String) {
@@ -113,6 +114,7 @@ fun VlcMediaPlayerScreen(
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
 
     // Android TV back handler
     BackHandler {
@@ -253,6 +255,7 @@ fun VlcMediaPlayerScreen(
                         mediaPlayerRef = mp
                         durationMs = mp.duration.toLong()
                         isBuffering = false
+                        playbackError = null
                         mp.start()
                         isPlaying = true
                     }
@@ -266,8 +269,10 @@ fun VlcMediaPlayerScreen(
                         true
                     }
 
-                    setOnErrorListener { _, _, _ ->
+                    setOnErrorListener { _, what, extra ->
                         isBuffering = false
+                        isPlaying = false
+                        playbackError = "Playback error ($what/$extra). Check the server stream and network connection."
                         true
                     }
 
@@ -305,6 +310,50 @@ fun VlcMediaPlayerScreen(
             }
         }
 
+        playbackError?.let { message ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.42f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(42.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Unable to play",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = message,
+                        color = Color.White.copy(alpha = 0.75f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(onClick = {
+                        playbackError = null
+                        isBuffering = true
+                        videoViewRef?.let { it.stopPlayback(); it.setVideoURI(Uri.parse(videoUrl)); it.start() }
+                    }) {
+                        Text("Retry")
+                    }
+                }
+            }
+        }
+
         // VLC Controls Overlay
         AnimatedVisibility(
             visible = areControlsVisible,
@@ -317,9 +366,9 @@ fun VlcMediaPlayerScreen(
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                Color.Black.copy(alpha = 0.75f),
+                                Color.Black.copy(alpha = 0.38f),
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.85f)
+                                Color.Black.copy(alpha = 0.58f)
                             )
                         )
                     )
@@ -341,7 +390,7 @@ fun VlcMediaPlayerScreen(
                             onClick = { onNavigateBack() },
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.5f))
+                                .background(Color.Black.copy(alpha = 0.34f))
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -358,7 +407,7 @@ fun VlcMediaPlayerScreen(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(4.dp))
-                                        .background(VlcOrange)
+                                        .background(VlcOrange.copy(alpha = 0.92f))
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
@@ -430,7 +479,7 @@ fun VlcMediaPlayerScreen(
                         modifier = Modifier
                             .size(52.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
+                            .background(Color.Black.copy(alpha = 0.38f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Replay10,
@@ -446,7 +495,7 @@ fun VlcMediaPlayerScreen(
                         modifier = Modifier
                             .size(72.dp)
                             .clip(CircleShape)
-                            .background(VlcOrange)
+                            .background(VlcOrange.copy(alpha = 0.92f))
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -462,7 +511,7 @@ fun VlcMediaPlayerScreen(
                         modifier = Modifier
                             .size(52.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
+                            .background(Color.Black.copy(alpha = 0.38f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Forward10,

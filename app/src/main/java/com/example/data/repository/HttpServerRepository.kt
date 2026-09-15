@@ -509,7 +509,7 @@ object HttpServerRepository : ServerRepository {
         }
     }
 
-    suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
             val safePath = sanitizePath(filePath)
@@ -517,6 +517,23 @@ object HttpServerRepository : ServerRepository {
             res.isSuccessful
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete file: ${e.message}")
+            false
+        }
+    }
+
+    override suspend fun renameFile(path: String, newName: String): Boolean = withContext(Dispatchers.IO) {
+        val api = ApiClient.getApiService() ?: return@withContext false
+        try {
+            val safePath = sanitizePath(path)
+            val res = api.renameFile(
+                com.example.network.models.RenameFileRequest(
+                    path = safePath,
+                    name = newName.trim()
+                )
+            )
+            res.isSuccessful
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to rename item: ${e.message}")
             false
         }
     }

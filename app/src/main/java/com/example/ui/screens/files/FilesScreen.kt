@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -48,6 +49,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -80,12 +83,18 @@ fun FilesScreen(
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val displayedFiles by viewModel.displayedFiles.collectAsStateWithLifecycle()
     val cloudDownloads by viewModel.cloudDownloads.collectAsStateWithLifecycle()
+    val isAdmin by viewModel.isAdmin.collectAsStateWithLifecycle()
 
     var isSearchActive by remember { mutableStateOf(false) }
     var isSortMenuOpen by remember { mutableStateOf(false) }
     var isMoreMenuOpen by remember { mutableStateOf(false) }
     var isFabMenuOpen by remember { mutableStateOf(false) }
     var isCloudDownloadOpen by remember { mutableStateOf(false) }
+    var selectedFile by remember { mutableStateOf<com.example.data.model.FileItem?>(null) }
+    var actionFile by remember { mutableStateOf<com.example.data.model.FileItem?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameName by remember { mutableStateOf("") }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -105,6 +114,108 @@ fun FilesScreen(
                 scope.launch {
                     snackbarHostState.showSnackbar("Cloud download started: $filename")
                 }
+            }
+        )
+    }
+
+    selectedFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { selectedFile = null },
+            title = { Text(file.name, maxLines = 1) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(file.formattedSize ?: if (file.isFolder) "Folder" else "File")
+                    Text(
+                        file.path,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (isAdmin) {
+                        TextButton(onClick = {
+                            renameName = file.name
+                            actionFile = file
+                            selectedFile = null
+                            showRenameDialog = true
+                        }) { Text("Rename") }
+                        TextButton(onClick = {
+                            actionFile = file
+                            selectedFile = null
+                            showDeleteDialog = true
+                        }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    }
+                    TextButton(onClick = {
+                        if (file.isFolder) {
+                            viewModel.navigateToFolder(file.path)
+                        } else if (!file.downloadUrl.isNullOrBlank()) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("File URL", file.downloadUrl))
+                            scope.launch { snackbarHostState.showSnackbar("Link copied") }
+                        }
+                        selectedFile = null
+                    }) { Text(if (file.isFolder) "Open" else "Copy link") }
+                }
+            }
+        )
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename item") },
+            text = {
+                OutlinedTextField(
+                    value = renameName,
+                    onValueChange = { renameName = it },
+                    label = { Text("New name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val file = actionFile
+                        if (file != null && renameName.isNotBlank()) {
+                            viewModel.renameFile(file.path, renameName) { ok, message ->
+                                scope.launch { snackbarHostState.showSnackbar(message) }
+                            }
+                        }
+                        showRenameDialog = false
+                    }
+                ) { Text("Rename") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showDeleteDialog) {
+        val file = actionFile
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete ${file?.name ?: "item"}?") },
+            text = {
+                Text("This permanently removes the item from the DhilipHome server.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        file?.let {
+                            viewModel.deleteFile(it.path) { ok, message ->
+                                scope.launch { snackbarHostState.showSnackbar(message) }
+                            }
+                        }
+                        showDeleteDialog = false
+                    }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -234,7 +345,17 @@ fun FilesScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f)
+                                )
+                            )
+                        )
+                        .padding(horizontal = 6.dp, vertical = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -475,18 +596,7 @@ fun FilesScreen(
                             }
                         },
                         onMoreClick = {
-                            if (!file.downloadUrl.isNullOrBlank()) {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                val clip = ClipData.newPlainText("File URL", file.downloadUrl)
-                                clipboard?.setPrimaryClip(clip)
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Copied link: ${file.downloadUrl}")
-                                }
-                            } else {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("${file.name} • ${file.formattedSize ?: "File"}")
-                                }
-                            }
+                            selectedFile = file
                         }
                     )
                 }
@@ -503,7 +613,14 @@ private fun QuickFolderChip(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.82f),
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                    )
+                )
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically

@@ -40,6 +40,9 @@ class SettingsViewModel : ViewModel() {
 
     private val _authStatus = MutableStateFlow<AuthStatusResponse?>(null)
     val authStatus: StateFlow<AuthStatusResponse?> = _authStatus.asStateFlow()
+    val isAdmin: StateFlow<Boolean> = kotlinx.coroutines.flow.map(_authStatus) {
+        it?.user?.role?.equals("admin", ignoreCase = true) == true
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
 
     private val _biometricEnabled = MutableStateFlow(false)
     val biometricEnabled: StateFlow<Boolean> = _biometricEnabled.asStateFlow()
@@ -113,6 +116,7 @@ class SettingsViewModel : ViewModel() {
             val res = api.getAuthStatus()
             if (res.isSuccessful) {
                 _authStatus.value = res.body()
+                ServerConfig.setCurrentRole(res.body()?.user?.role)
             }
         } catch (_: Exception) {}
     }
@@ -143,8 +147,7 @@ class SettingsViewModel : ViewModel() {
 
     fun logout() {
         ApiClient.authInterceptor.clear()
-        _authStatus.value = AuthStatusResponse(authenticated = false, rootUsername = null)
-        viewModelScope.launch {
+        _authStatus.value = AuthStatusResponse(authenticated = false, rootUsername = null)\n        ServerConfig.clearCurrentRole()\n        viewModelScope.launch {
             try {
                 ApiClient.getApiService()?.logout()
             } catch (_: Exception) {}
