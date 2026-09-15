@@ -169,9 +169,10 @@ fun FileItemRow(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.size(20.dp)
             )
-        } else {
+        }
+        if (onMoreClick != null) {
             IconButton(
-                onClick = { onMoreClick?.invoke() },
+                onClick = onMoreClick,
                 modifier = Modifier.size(36.dp)
             ) {
                 Icon(

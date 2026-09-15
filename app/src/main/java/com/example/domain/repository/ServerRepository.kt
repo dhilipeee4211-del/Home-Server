@@ -23,4 +23,6 @@ interface ServerRepository {
     fun getStorageInfo(): Flow<StorageInfo>
     fun getRecentActivities(): Flow<List<RecentActivity>>
     suspend fun toggleMediaFavorite(id: String): Boolean
+    suspend fun deleteFile(path: String): Boolean
+    suspend fun renameFile(path: String, newName: String): Boolean
 }

@@ -60,6 +60,9 @@ object ServerConfig {
     // Backward-compatible alias for existing views
     val serverUrl: StateFlow<String> get() = _baseUrl
 
+    private val _currentRole = MutableStateFlow<String?>(null)
+    val currentRole: StateFlow<String?> = _currentRole.asStateFlow()
+
     private val _connectionState = MutableStateFlow(ServerConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ServerConnectionState> = _connectionState.asStateFlow()
 
@@ -76,6 +79,16 @@ object ServerConfig {
         _useHttps.value = savedHttps
         updateBaseUrl()
     }
+
+    fun setCurrentRole(role: String?) {
+        _currentRole.value = role?.trim()?.lowercase()
+    }
+
+    fun clearCurrentRole() {
+        _currentRole.value = null
+    }
+
+    fun isAdmin(): Boolean = _currentRole.value == "admin"
 
     fun isConfigured(): Boolean = _serverHost.value.isNotBlank()
 

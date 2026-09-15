@@ -91,35 +91,3 @@ val Typography = Typography(
         letterSpacing = 0.5.sp
     )
 )
-
-/**
- * Supplemental styles outside the fixed Material3 Typography slots.
- * Monospace is reserved for live data readouts — hostnames, IPs, ports,
- * byte counts, percentages — so the numbers read like a device panel
- * rather than blending into ordinary UI copy.
- */
-object AppTypography {
-    val statValue = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 17.sp,
-        lineHeight = 22.sp,
-        letterSpacing = 0.sp
-    )
-
-    val statValueLarge = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 26.sp,
-        lineHeight = 30.sp,
-        letterSpacing = (-0.2).sp
-    )
-
-    val readoutLabel = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 14.sp,
-        letterSpacing = 0.8.sp
-    )
-}

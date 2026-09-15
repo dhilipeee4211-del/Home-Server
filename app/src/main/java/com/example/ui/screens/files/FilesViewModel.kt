@@ -6,6 +6,7 @@ import com.example.data.model.CloudDownloadTask
 import com.example.data.model.FileItem
 import com.example.data.repository.CloudDownloadManager
 import com.example.domain.repository.ServerRepository
+import com.example.network.ServerConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -54,8 +55,30 @@ class FilesViewModel(
         CloudDownloadManager.cancelDownload(taskId)
     }
 
+    val isAdmin: StateFlow<Boolean> = ServerConfig.currentRole
+        .let { roleFlow ->
+            kotlinx.coroutines.flow.map(roleFlow) { it?.equals("admin", ignoreCase = true) == true }
+                .stateIn(viewModelScope, SharingStarted.Eagerly, ServerConfig.isAdmin())
+        }
+
     fun clearCompletedDownloads() {
         CloudDownloadManager.clearCompleted()
+    }
+
+    fun deleteFile(path: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val ok = try { repository.deleteFile(path) } catch (e: Exception) { false }
+            onResult(ok, if (ok) "Deleted successfully" else "Delete failed")
+            if (ok) refresh()
+        }
+    }
+
+    fun renameFile(path: String, newName: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val ok = try { repository.renameFile(path, newName) } catch (e: Exception) { false }
+            onResult(ok, if (ok) "Renamed successfully" else "Rename failed")
+            if (ok) refresh()
+        }
     }
 
     val displayedFiles: StateFlow<List<FileItem>> = combine(
