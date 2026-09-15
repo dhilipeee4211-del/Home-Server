@@ -1,5 +1,10 @@
 package com.example.data.repository
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.app.DownloadManager
+import android.os.Environment
 import android.util.Log
 import com.example.data.model.FileItem
 import com.example.data.model.FileType
@@ -309,9 +314,86 @@ object HttpServerRepository : ServerRepository {
 
     override fun getServerStatus(): Flow<ServerStatus> = _serverStatus.asStateFlow()
 
+    private val PERSISTENT_FILES_CACHE = "files_catalog_persistent.json"
+
+    private fun loadPersistentFileCache(safePath: String): List<FileItem>? {
+        val appCtx = ServerConfig.appContext ?: return null
+        return try {
+            val file = File(appCtx.filesDir, PERSISTENT_FILES_CACHE)
+            if (!file.exists()) return null
+            val text = file.readText()
+            if (text.isBlank()) return null
+            val root = JSONObject(text)
+            val arr = root.optJSONArray(safePath) ?: return null
+            val list = mutableListOf<FileItem>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val isDir = o.optBoolean("isFolder", false)
+                val typeStr = o.optString("type", if (isDir) "FOLDER" else "OTHER")
+                val type = try { FileType.valueOf(typeStr) } catch (_: Exception) { if (isDir) FileType.FOLDER else FileType.OTHER }
+                val sizeBytes = if (o.has("sizeBytes") && !o.isNull("sizeBytes")) o.optLong("sizeBytes") else null
+                list.add(
+                    FileItem(
+                        id = o.optString("id", "file_${safePath}_$i"),
+                        name = o.optString("name", "file"),
+                        path = o.optString("path", "$safePath/"),
+                        isFolder = isDir,
+                        type = type,
+                        sizeBytes = sizeBytes,
+                        formattedSize = o.optString("formattedSize").takeIf { it.isNotBlank() },
+                        modifiedDate = o.optString("modifiedDate", "Recent"),
+                        downloadUrl = o.optString("downloadUrl").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+            list
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load persistent file cache: ${e.message}")
+            null
+        }
+    }
+
+    private fun savePersistentFileCache(safePath: String, items: List<FileItem>) {
+        val appCtx = ServerConfig.appContext ?: return
+        if (items.isEmpty()) return
+        try {
+            val file = File(appCtx.filesDir, PERSISTENT_FILES_CACHE)
+            val root = if (file.exists() && file.length() > 0) {
+                try { JSONObject(file.readText()) } catch (_: Exception) { JSONObject() }
+            } else {
+                JSONObject()
+            }
+            val arr = JSONArray()
+            for (it in items) {
+                val o = JSONObject().apply {
+                    put("id", it.id)
+                    put("name", it.name)
+                    put("path", it.path)
+                    put("isFolder", it.isFolder)
+                    put("type", it.type.name)
+                    if (it.sizeBytes != null) put("sizeBytes", it.sizeBytes)
+                    if (it.formattedSize != null) put("formattedSize", it.formattedSize)
+                    put("modifiedDate", it.modifiedDate)
+                    if (it.downloadUrl != null) put("downloadUrl", it.downloadUrl)
+                }
+                arr.put(o)
+            }
+            root.put(safePath, arr)
+            file.writeText(root.toString())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save persistent file cache: ${e.message}")
+        }
+    }
+
     override fun getFiles(directoryPath: String): Flow<List<FileItem>> = flow {
         val safePath = sanitizePath(directoryPath)
         val serverBase = ServerConfig.baseUrl.value.trimEnd('/')
+
+        // 1. Instant recovery: emit memory cache or persistent storage cache (survives clearing cache!)
+        val immediateCache = _cachedFiles.value[safePath] ?: loadPersistentFileCache(safePath)
+        if (!immediateCache.isNullOrEmpty()) {
+            emit(immediateCache)
+        }
 
         // The Debian server accepts path relative to DATA_ROOT (empty string or subfolder)
         val queryPath = if (safePath == "/" || safePath.isBlank()) "" else safePath.trimStart('/')
@@ -319,31 +401,113 @@ object HttpServerRepository : ServerRepository {
         var loadedFiles: List<FileItem>? = null
 
         if (api != null && serverBase.isNotBlank()) {
+            // Attempt 1: listFiles with queryPath
             try {
                 val response = api.listFiles(queryPath)
                 if (response.isSuccessful) {
                     val bodyString = response.body()?.string() ?: ""
-                    loadedFiles = parseJsonFileList(bodyString, safePath, serverBase)
+                    loadedFiles = if (bodyString.trim().startsWith("<")) {
+                        parseHtmlFileList(bodyString, safePath, serverBase)
+                    } else {
+                        parseJsonFileList(bodyString, safePath, serverBase)
+                    }
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "listFiles failed for path '$queryPath': ${e.message}")
             }
 
+            // Attempt 2: getFiles with queryPath
             if (loadedFiles.isNullOrEmpty()) {
                 try {
                     val response = api.getFiles(queryPath)
                     if (response.isSuccessful) {
                         val bodyString = response.body()?.string() ?: ""
-                        loadedFiles = parseJsonFileList(bodyString, safePath, serverBase)
+                        loadedFiles = if (bodyString.trim().startsWith("<")) {
+                            parseHtmlFileList(bodyString, safePath, serverBase)
+                        } else {
+                            parseJsonFileList(bodyString, safePath, serverBase)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "getFiles failed for path '$queryPath': ${e.message}")
                 }
             }
+
+            // Attempt 3: If root path, try with "/" parameter explicitly
+            if (loadedFiles.isNullOrEmpty() && (safePath == "/" || safePath.isBlank())) {
+                try {
+                    val response = api.listFiles("/")
+                    if (response.isSuccessful) {
+                        val bodyString = response.body()?.string() ?: ""
+                        loadedFiles = parseJsonFileList(bodyString, safePath, serverBase)
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
-        val result = loadedFiles ?: emptyList()
+        // 2. Media Synchronization fallback: If root has no files returned directly, synthesize from server media
+        if (loadedFiles.isNullOrEmpty() && (safePath == "/" || safePath.isBlank())) {
+            val mediaItems = _discoveredMedia.value.ifEmpty {
+                try { refreshMediaCatalog() } catch (_: Exception) { emptyList() }
+            }
+            if (mediaItems.isNotEmpty()) {
+                val synthesized = mutableListOf<FileItem>()
+                // Group media into category folders or root files
+                val categories = mediaItems.map { it.category }.distinct()
+                var folderIndex = 0
+                for (cat in categories) {
+                    val folderName = when (cat) {
+                        MediaCategory.VIDEOS -> "Videos"
+                        MediaCategory.MOVIES -> "Movies"
+                        MediaCategory.TV_SHOWS -> "TV Shows"
+                        MediaCategory.MUSIC -> "Music"
+                        MediaCategory.PHOTOS -> "Photos"
+                        else -> "Media"
+                    }
+                    synthesized.add(
+                        FileItem(
+                            id = "cat_dir_${folderIndex++}",
+                            name = folderName,
+                            path = "/$folderName/",
+                            isFolder = true,
+                            type = FileType.FOLDER,
+                            sizeBytes = null,
+                            formattedSize = null,
+                            modifiedDate = "Server Folder",
+                            downloadUrl = null
+                        )
+                    )
+                }
+                // Add direct media items if few
+                for (m in mediaItems.take(50)) {
+                    synthesized.add(
+                        FileItem(
+                            id = "media_file_${m.id}",
+                            name = m.filePath.substringAfterLast('/').ifBlank { "${m.title}.mp4" },
+                            path = if (m.filePath.startsWith("/")) m.filePath else "/${m.filePath}",
+                            isFolder = false,
+                            type = when (m.category) {
+                                MediaCategory.VIDEOS, MediaCategory.MOVIES, MediaCategory.TV_SHOWS -> FileType.VIDEO
+                                MediaCategory.MUSIC -> FileType.AUDIO
+                                MediaCategory.PHOTOS -> FileType.IMAGE
+                                else -> FileType.OTHER
+                            },
+                            sizeBytes = null,
+                            formattedSize = m.fileSizeBytes.ifBlank { "Stream" },
+                            modifiedDate = "Stored Media",
+                            downloadUrl = m.streamUrl
+                        )
+                    )
+                }
+                loadedFiles = synthesized.distinctBy { it.path }
+            }
+        }
+
+        val result = loadedFiles ?: immediateCache ?: emptyList()
         _cachedFiles.value = _cachedFiles.value + (safePath to result)
+        if (result.isNotEmpty()) {
+            savePersistentFileCache(safePath, result)
+        }
         updateDiscoveredMedia(result)
         emit(result)
     }.flowOn(Dispatchers.IO)
@@ -495,33 +659,46 @@ object HttpServerRepository : ServerRepository {
         return files.sortedWith(compareBy<FileItem> { !it.isFolder }.thenBy { it.name.lowercase() })
     }
 
-    suspend fun createFolder(folderPath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun createFolder(folderPath: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
             val safe = sanitizePath(folderPath)
             val name = safe.trimEnd('/').substringAfterLast('/')
             val parent = safe.trimEnd('/').substringBeforeLast('/', "").trimStart('/')
             val res = api.createFolder(CreateFolderRequest(name = name, path = parent))
-            res.isSuccessful
+            if (res.isSuccessful) {
+                notifyFilesChanged(parent.ifEmpty { "/" })
+                recordActivity(title = "Created folder: $name", subtitle = "In /$parent", type = FileType.FOLDER)
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create folder: ${e.message}")
             false
         }
     }
 
-    suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
             val safePath = sanitizePath(filePath)
             val res = api.deleteFile(path = safePath)
-            res.isSuccessful
+            if (res.isSuccessful) {
+                val parent = safePath.trimEnd('/').substringBeforeLast('/', "").ifEmpty { "/" }
+                notifyFilesChanged(parent)
+                recordActivity(title = "Deleted item", subtitle = safePath, type = FileType.OTHER)
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete file: ${e.message}")
             false
         }
     }
 
-    suspend fun uploadFile(file: File, destinationFolder: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun uploadFile(file: File, destinationFolder: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
             val safeFolder = sanitizePath(destinationFolder)
@@ -530,10 +707,149 @@ object HttpServerRepository : ServerRepository {
             val pathPart = safeFolder.toRequestBody("text/plain".toMediaTypeOrNull())
 
             val res = api.uploadFile(body, pathPart)
-            res.isSuccessful
+            if (res.isSuccessful) {
+                notifyFilesChanged(destinationFolder)
+                recordActivity(title = "Uploaded ${file.name}", subtitle = "To $destinationFolder", type = detectFileType(file.name))
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to upload file: ${e.message}")
             false
+        }
+    }
+
+    suspend fun uploadFileFromUri(
+        context: Context,
+        uri: Uri,
+        destinationFolder: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val fileName = getFileNameFromUri(context, uri) ?: "upload_${System.currentTimeMillis()}"
+        val tempFile = File(context.cacheDir, "upload_cache_${System.currentTimeMillis()}_$fileName")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (tempFile.exists() && tempFile.length() > 0) {
+                return@withContext uploadFile(tempFile, destinationFolder)
+            }
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to upload file from uri: ${e.message}")
+            false
+        } finally {
+            try { tempFile.delete() } catch (_: Exception) {}
+        }
+    }
+
+    fun getFileNameFromUri(context: Context, uri: Uri): String? {
+        var name: String? = null
+        if (uri.scheme == "content") {
+            try {
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index != -1) {
+                            name = it.getString(index)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        if (name.isNullOrBlank()) {
+            name = uri.path?.substringAfterLast('/')
+        }
+        return name
+    }
+
+    fun downloadFileToDevice(context: Context, fileItem: FileItem): Boolean {
+        try {
+            val downloadUrl = fileItem.downloadUrl ?: ApiClient.getDownloadUrl(fileItem.path)
+            val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
+                setTitle(fileItem.name)
+                setDescription("Downloading from DhilipHome Server")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileItem.name)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
+                val token = ApiClient.authInterceptor.getToken()
+                if (!token.isNullOrBlank()) {
+                    addRequestHeader("Authorization", "Bearer $token")
+                }
+            }
+            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+            manager?.enqueue(request)
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enqueue download manager: ${e.message}", e)
+            return false
+        }
+    }
+
+    /**
+     * Resolves and preserves the exact original filename from a URL or title,
+     * sanitizing illegal characters, and queues a high-speed download to the phone's Downloads directory.
+     */
+    fun downloadUrlToDeviceAsOriginalName(context: Context, url: String, suggestedTitle: String? = null): String? {
+        try {
+            var rawName = ""
+            // First check if suggestedTitle has a valid file extension
+            if (!suggestedTitle.isNullOrBlank() && suggestedTitle.contains('.') && !suggestedTitle.endsWith('.')) {
+                rawName = suggestedTitle.trim()
+            }
+
+            if (rawName.isBlank()) {
+                // Extract filename from URL path or query params
+                val uri = Uri.parse(url)
+                val pathParam = uri.getQueryParameter("path") ?: uri.getQueryParameter("file") ?: uri.getQueryParameter("name")
+                if (!pathParam.isNullOrBlank()) {
+                    rawName = pathParam.substringAfterLast('/')
+                }
+                if (rawName.isBlank()) {
+                    rawName = uri.lastPathSegment.orEmpty()
+                }
+            }
+
+            if (rawName.isBlank()) {
+                rawName = if (!suggestedTitle.isNullOrBlank()) "$suggestedTitle.mp4" else "media_${System.currentTimeMillis()}.mp4"
+            }
+
+            // URL decode if needed
+            var originalName = try {
+                java.net.URLDecoder.decode(rawName, "UTF-8")
+            } catch (_: Exception) {
+                rawName
+            }
+
+            // Strip illegal filesystem characters: / \ : * ? " < > |
+            originalName = originalName.replace(Regex("[/\\\\:*?\"<>|]"), "_").trim()
+            if (!originalName.contains('.')) {
+                originalName = "$originalName.mp4"
+            }
+
+            val request = DownloadManager.Request(Uri.parse(url)).apply {
+                setTitle(originalName)
+                setDescription("Original video saved from DhilipHome")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, originalName)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
+                val token = ApiClient.authInterceptor.getToken()
+                if (!token.isNullOrBlank()) {
+                    addRequestHeader("Authorization", "Bearer $token")
+                }
+            }
+
+            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+            manager?.enqueue(request)
+            return originalName
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to download media as original name: ${e.message}", e)
+            return null
         }
     }
 

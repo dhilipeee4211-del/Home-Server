@@ -97,4 +97,29 @@ interface ApiService {
 
     @GET("api/activity")
     suspend fun getActivity(): Response<ResponseBody>
+
+    // Server-Side Cloud Download & Background Tasks
+    @POST("api/files/remote-download")
+    suspend fun startRemoteDownload(@Body request: RequestBody): Response<ResponseBody>
+
+    @GET("api/files/remote-download")
+    suspend fun getRemoteDownloads(): Response<ResponseBody>
+
+    @POST("api/files/remote-download/pause")
+    suspend fun pauseRemoteDownload(@Body request: RequestBody): Response<ResponseBody>
+
+    @POST("api/files/remote-download/resume")
+    suspend fun resumeRemoteDownload(@Body request: RequestBody): Response<ResponseBody>
+
+    @POST("api/files/remote-download/cancel")
+    suspend fun cancelRemoteDownload(@Body request: RequestBody): Response<ResponseBody>
+
+    @POST("api/download")
+    suspend fun startDownloadTask(@Body request: RequestBody): Response<ResponseBody>
+
+    @GET("api/download/status")
+    suspend fun getDownloadStatus(): Response<ResponseBody>
+
+    @GET("api/tasks")
+    suspend fun getTasks(@Query("type") type: String? = null): Response<ResponseBody>
 }

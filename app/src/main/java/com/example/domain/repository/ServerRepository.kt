@@ -23,4 +23,7 @@ interface ServerRepository {
     fun getStorageInfo(): Flow<StorageInfo>
     fun getRecentActivities(): Flow<List<RecentActivity>>
     suspend fun toggleMediaFavorite(id: String): Boolean
+    suspend fun createFolder(folderPath: String): Boolean
+    suspend fun deleteFile(filePath: String): Boolean
+    suspend fun uploadFile(file: java.io.File, destinationFolder: String): Boolean
 }
