@@ -1,21 +1,19 @@
 package com.example.ui.screens.player
 
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
+import android.media.MediaPlayer
 import android.net.Uri
-import android.widget.Toast
+import android.view.KeyEvent as AndroidKeyEvent
+import android.widget.FrameLayout
+import android.widget.VideoView
 import androidx.activity.compose.BackHandler
-import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +31,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
@@ -43,20 +40,18 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,7 +59,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -74,7 +68,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -82,18 +75,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
-import com.example.data.repository.HttpServerRepository
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -102,14 +83,13 @@ private val VlcOrange = Color(0xFFFF8800)
 private val VlcOrangeLight = Color(0xFFFFAA33)
 private val VlcDarkBackground = Color(0xFF0D0E11)
 
-enum class AspectRatioMode(val label: String, val resizeMode: Int) {
-    FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
-    FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
-    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
-    FIXED_16_9("16:9", AspectRatioFrameLayout.RESIZE_MODE_FIT)
+enum class AspectRatioMode(val label: String) {
+    FIT("Fit"),
+    FILL("Fill"),
+    RATIO_16_9("16:9"),
+    RATIO_4_3("4:3")
 }
 
-@OptIn(UnstableApi::class)
 @Composable
 fun VlcMediaPlayerScreen(
     videoUrl: String,
@@ -124,114 +104,43 @@ fun VlcMediaPlayerScreen(
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
-    var bufferedPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var areControlsVisible by remember { mutableStateOf(true) }
     var aspectRatioMode by remember { mutableStateOf(AspectRatioMode.FIT) }
     var isMuted by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
-    var isSpeedMenuOpen by remember { mutableStateOf(false) }
+    var speedMenuOpen by remember { mutableStateOf(false) }
+    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    // Scrubbing state for buttery smooth seeking
-    var isScrubbing by remember { mutableStateOf(false) }
-    var scrubRatio by remember { mutableFloatStateOf(0f) }
-
-    // Double tap feedback state
-    var doubleTapRippleType by remember { mutableStateOf<String?>(null) }
-
-    // Configure ExoPlayer with optimized buffer parameters for ultra-smooth playback
-    val exoPlayer = remember {
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                /* minBufferMs = */ 15_000,
-                /* maxBufferMs = */ 60_000,
-                /* bufferForPlaybackMs = */ 1_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 2_000
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
-
-        val renderersFactory = DefaultRenderersFactory(context)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-
-        ExoPlayer.Builder(context, renderersFactory)
-            .setLoadControl(loadControl)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .setUsage(C.USAGE_MEDIA)
-                    .build(),
-                /* handleAudioFocus = */ true
-            )
-            .setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
-            .build().apply {
-                val mediaItem = MediaItem.fromUri(Uri.parse(videoUrl))
-                setMediaItem(mediaItem)
-                prepare()
-                playWhenReady = true
-            }
-    }
-
-    var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
-
-    // Hook ExoPlayer event listeners
-    DisposableEffect(exoPlayer) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                when (playbackState) {
-                    Player.STATE_BUFFERING -> {
-                        isBuffering = true
-                    }
-                    Player.STATE_READY -> {
-                        isBuffering = false
-                        durationMs = exoPlayer.duration.coerceAtLeast(0L)
-                    }
-                    Player.STATE_ENDED -> {
-                        isBuffering = false
-                    }
-                    Player.STATE_IDLE -> {}
-                }
-            }
-
-            override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
-            }
-        }
-        exoPlayer.addListener(listener)
-
-        onDispose {
-            exoPlayer.removeListener(listener)
-            exoPlayer.stop()
-            exoPlayer.release()
-        }
-    }
-
-    // Android back handler
+    // Android TV back handler
     BackHandler {
         onNavigateBack()
     }
 
     // Auto-hide controls after 4 seconds of inactivity
-    LaunchedEffect(lastInteractionTime, areControlsVisible, isPlaying, isScrubbing) {
-        if (areControlsVisible && isPlaying && !isScrubbing) {
+    LaunchedEffect(lastInteractionTime, areControlsVisible, isPlaying) {
+        if (areControlsVisible && isPlaying) {
             delay(4000)
             areControlsVisible = false
         }
     }
 
-    // Smooth position & buffer tracking loop (only when not actively scrubbing)
-    LaunchedEffect(exoPlayer, isScrubbing) {
+    // Track playback progress
+    LaunchedEffect(isPlaying, videoViewRef) {
         while (true) {
-            if (!isScrubbing) {
-                currentPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-                bufferedPositionMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
-                val dur = exoPlayer.duration
-                if (dur > 0L) {
-                    durationMs = dur
+            videoViewRef?.let { vv ->
+                if (vv.isPlaying) {
+                    currentPositionMs = vv.currentPosition.toLong()
+                    val dur = vv.duration.toLong()
+                    if (dur > 0) {
+                        durationMs = dur
+                    }
+                    isBuffering = false
                 }
             }
-            delay(200)
+            delay(500)
         }
     }
 
@@ -242,32 +151,31 @@ fun VlcMediaPlayerScreen(
 
     fun togglePlayPause() {
         triggerInteraction()
-        if (exoPlayer.isPlaying) {
-            exoPlayer.pause()
-        } else {
-            exoPlayer.play()
+        videoViewRef?.let { vv ->
+            if (vv.isPlaying) {
+                vv.pause()
+                isPlaying = false
+            } else {
+                vv.start()
+                isPlaying = true
+            }
+        } ?: run {
+            isPlaying = !isPlaying
         }
     }
 
     fun seekBy(offsetMs: Long) {
         triggerInteraction()
-        val target = (exoPlayer.currentPosition + offsetMs).coerceIn(0L, durationMs.coerceAtLeast(0L))
-        exoPlayer.seekTo(target)
-        currentPositionMs = target
-    }
-
-    fun saveVideoWithOriginalName() {
-        triggerInteraction()
-        val savedName = HttpServerRepository.downloadUrlToDeviceAsOriginalName(context, videoUrl, videoTitle)
-        if (!savedName.isNullOrBlank()) {
-            Toast.makeText(context, "Saving \"$savedName\" to Downloads folder", Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(context, "Failed to start download", Toast.LENGTH_SHORT).show()
+        videoViewRef?.let { vv ->
+            val newPos = (vv.currentPosition + offsetMs).coerceIn(0L, (if (durationMs > 0) durationMs else 3600000L))
+            vv.seekTo(newPos.toInt())
+            currentPositionMs = newPos
         }
     }
 
     fun openInVlcApp() {
         try {
+            // Attempt direct launch into official VLC app
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(Uri.parse(videoUrl), "video/*")
                 setPackage("org.videolan.vlc")
@@ -275,6 +183,7 @@ fun VlcMediaPlayerScreen(
             }
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
+            // Fallback: open in any available player with chooser
             val chooserIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(Uri.parse(videoUrl), "video/*")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -283,6 +192,7 @@ fun VlcMediaPlayerScreen(
         }
     }
 
+    // Key events for Android TV Remote (DPad Center, Left, Right, Up, Down, Space)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -304,7 +214,11 @@ fun VlcMediaPlayerScreen(
                             seekBy(10000)
                             true
                         }
-                        Key.DirectionUp, Key.DirectionDown -> {
+                        Key.DirectionUp -> {
+                            triggerInteraction()
+                            true
+                        }
+                        Key.DirectionDown -> {
                             triggerInteraction()
                             true
                         }
@@ -316,117 +230,82 @@ fun VlcMediaPlayerScreen(
                     }
                 } else false
             }
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                if (areControlsVisible) {
+                    areControlsVisible = false
+                } else {
+                    triggerInteraction()
+                }
+            }
             .testTag("vlc_player_screen")
     ) {
-        // High-Performance Media3 Video Surface
+        // Video View surface
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                    resizeMode = aspectRatioMode.resizeMode
+                VideoView(ctx).apply {
                     keepScreenOn = true
-                    playerViewRef = this
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+
+                    setOnPreparedListener { mp ->
+                        mediaPlayerRef = mp
+                        durationMs = mp.duration.toLong()
+                        isBuffering = false
+                        mp.start()
+                        isPlaying = true
+                    }
+
+                    setOnInfoListener { _, what, _ ->
+                        if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                            isBuffering = true
+                        } else if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) {
+                            isBuffering = false
+                        }
+                        true
+                    }
+
+                    setOnErrorListener { _, _, _ ->
+                        isBuffering = false
+                        true
+                    }
+
+                    setOnCompletionListener {
+                        isPlaying = false
+                        areControlsVisible = true
+                    }
+
+                    try {
+                        setVideoURI(Uri.parse(videoUrl))
+                    } catch (e: Exception) {
+                        isBuffering = false
+                    }
+
+                    videoViewRef = this
                 }
             },
-            update = { view ->
-                view.resizeMode = aspectRatioMode.resizeMode
+            update = { vv ->
+                videoViewRef = vv
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Gesture Overlay: Double Tap Left/Right to Seek, Single Tap to Toggle Controls
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = {
-                            if (areControlsVisible) {
-                                areControlsVisible = false
-                            } else {
-                                triggerInteraction()
-                            }
-                        },
-                        onDoubleTap = { offset ->
-                            triggerInteraction()
-                            val isLeft = offset.x < size.width / 2
-                            if (isLeft) {
-                                seekBy(-10000)
-                                doubleTapRippleType = "-10s"
-                            } else {
-                                seekBy(10000)
-                                doubleTapRippleType = "+10s"
-                            }
-                        }
-                    )
-                }
-        )
-
-        // Double Tap Animated Visual Indicator
-        LaunchedEffect(doubleTapRippleType) {
-            if (doubleTapRippleType != null) {
-                delay(600)
-                doubleTapRippleType = null
-            }
-        }
-
-        if (doubleTapRippleType != null) {
-            val isLeft = doubleTapRippleType == "-10s"
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = if (isLeft) Alignment.CenterStart else Alignment.CenterEnd
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (isLeft) Icons.Default.Replay10 else Icons.Default.Forward10,
-                            contentDescription = null,
-                            tint = VlcOrange,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = doubleTapRippleType!!,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // Centered Buffering Spinner
+        // Buffering spinner
         if (isBuffering) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.55f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(44.dp),
-                        color = VlcOrange,
-                        strokeWidth = 3.5.dp
-                    )
-                }
+                CircularProgressIndicator(
+                    color = VlcOrange,
+                    strokeWidth = 4.dp,
+                    modifier = Modifier.size(54.dp)
+                )
             }
         }
 
-        // Master Controls Overlay (Top Bar, Middle Controls, Bottom Bar)
+        // VLC Controls Overlay
         AnimatedVisibility(
             visible = areControlsVisible,
             enter = fadeIn(),
@@ -435,174 +314,144 @@ fun VlcMediaPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = 0.75f),
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.85f)
+                            )
+                        )
+                    )
             ) {
-                // Top Action Bar
-                Box(
+                // Top Header: Back, Title, VLC Brand Tag, Open in VLC Action
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.85f),
-                                    Color.Transparent
-                                )
-                            )
-                        )
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                        IconButton(
+                            onClick = { onNavigateBack() },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f))
                         ) {
-                            IconButton(
-                                onClick = { onNavigateBack() },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.15f))
-                                    .testTag("vlc_back_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    tint = Color.White
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White
+                            )
+                        }
 
-                            Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
 
-                            Column(modifier = Modifier.weight(1f)) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // VLC Traffic Cone badge
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(VlcOrange)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "VLC PLAYER",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color.White,
+                                        fontSize = 10.sp
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
                                 Text(
-                                    text = videoTitle,
+                                    text = videoTitle.ifBlank { "Media Stream" },
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(VlcOrange)
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text(
-                                            text = "DIRECT 1080P",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.Black
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "ExoPlayer Engine",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 11.sp,
-                                        color = Color.White.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Top Right Actions: Save Original Name & External VLC
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // "Save Original Name" Button
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(VlcOrange.copy(alpha = 0.25f))
-                                    .border(1.dp, VlcOrange.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                                    .clickable { saveVideoWithOriginalName() }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                                    .testTag("save_original_name_button")
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Download,
-                                        contentDescription = "Save Original",
-                                        tint = VlcOrange,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Save Original",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        fontSize = 11.sp
-                                    )
-                                }
                             }
 
-                            // Open in VLC / External Player
-                            IconButton(
-                                onClick = { openInVlcApp() },
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.15f))
-                                    .testTag("vlc_open_external")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.OpenInNew,
-                                    contentDescription = "Open in VLC app",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                            Text(
+                                text = videoUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.6f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 11.sp
+                            )
                         }
+                    }
+
+                    // Open in external VLC app button
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.White.copy(alpha = 0.15f))
+                            .clickable { openInVlcApp() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = "Open in VLC app",
+                            tint = VlcOrangeLight,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "External VLC",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
                     }
                 }
 
-                // Center Tactile Playback Controls
+                // Center OSD Controls (Rewind 10s, Play/Pause, Forward 10s)
                 Row(
                     modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Rewind 10s
                     IconButton(
                         onClick = { seekBy(-10000) },
                         modifier = Modifier
-                            .size(54.dp)
+                            .size(52.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
-                            .testTag("vlc_replay_10")
+                            .background(Color.Black.copy(alpha = 0.6f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Replay10,
-                            contentDescription = "Replay 10s",
+                            contentDescription = "Rewind 10s",
                             tint = Color.White,
                             modifier = Modifier.size(30.dp)
                         )
                     }
 
-                    // Play / Pause Master Center Button
+                    // Large Play / Pause
                     IconButton(
                         onClick = { togglePlayPause() },
                         modifier = Modifier
-                            .size(76.dp)
+                            .size(72.dp)
                             .clip(CircleShape)
                             .background(VlcOrange)
-                            .testTag("vlc_play_pause")
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.Black,
+                            tint = Color.White,
                             modifier = Modifier.size(42.dp)
                         )
                     }
@@ -611,10 +460,9 @@ fun VlcMediaPlayerScreen(
                     IconButton(
                         onClick = { seekBy(10000) },
                         modifier = Modifier
-                            .size(54.dp)
+                            .size(52.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
-                            .testTag("vlc_forward_10")
+                            .background(Color.Black.copy(alpha = 0.6f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.Forward10,
@@ -625,199 +473,143 @@ fun VlcMediaPlayerScreen(
                     }
                 }
 
-                // Bottom Control Bar
-                Box(
+                // Bottom VLC OSD: Timeline, Duration, Aspect Ratio, Speed, Volume
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.Black.copy(alpha = 0.88f)
-                                )
-                            )
-                        )
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // Time, Aspect Ratio, Speed, and Volume Controls
+                    // Time text and quick buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${formatTime(currentPositionMs)} / ${formatTime(durationMs)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Current Position & Duration
-                            val effectiveDuration = durationMs.coerceAtLeast(0L)
-                            val displayPos = if (isScrubbing) (scrubRatio * effectiveDuration).toLong() else currentPositionMs
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = formatTime(displayPos),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = " / ${formatTime(effectiveDuration)}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color.White.copy(alpha = 0.65f)
-                                )
-                            }
-
-                            // Control Pills
+                            // Aspect Ratio Mode Switcher
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                // Aspect Ratio Switcher
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.White.copy(alpha = 0.12f))
-                                        .clickable {
-                                            aspectRatioMode = when (aspectRatioMode) {
-                                                AspectRatioMode.FIT -> AspectRatioMode.FILL
-                                                AspectRatioMode.FILL -> AspectRatioMode.STRETCH
-                                                AspectRatioMode.STRETCH -> AspectRatioMode.FIXED_16_9
-                                                AspectRatioMode.FIXED_16_9 -> AspectRatioMode.FIT
-                                            }
-                                            triggerInteraction()
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.12f))
+                                    .clickable {
+                                        aspectRatioMode = when (aspectRatioMode) {
+                                            AspectRatioMode.FIT -> AspectRatioMode.FILL
+                                            AspectRatioMode.FILL -> AspectRatioMode.RATIO_16_9
+                                            AspectRatioMode.RATIO_16_9 -> AspectRatioMode.RATIO_4_3
+                                            AspectRatioMode.RATIO_4_3 -> AspectRatioMode.FIT
                                         }
-                                        .padding(horizontal = 8.dp, vertical = 5.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.AspectRatio,
-                                            contentDescription = "Aspect Ratio",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = aspectRatioMode.label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                // Playback Speed Switcher
-                                Box {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(Color.White.copy(alpha = 0.12f))
-                                            .clickable { isSpeedMenuOpen = true }
-                                            .padding(horizontal = 8.dp, vertical = 5.dp)
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Speed,
-                                                contentDescription = "Speed",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "${playbackSpeed}x",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-
-                                    DropdownMenu(
-                                        expanded = isSpeedMenuOpen,
-                                        onDismissRequest = { isSpeedMenuOpen = false }
-                                    ) {
-                                        listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
-                                            DropdownMenuItem(
-                                                text = { Text("${speed}x") },
-                                                onClick = {
-                                                    playbackSpeed = speed
-                                                    exoPlayer.playbackParameters = PlaybackParameters(speed)
-                                                    isSpeedMenuOpen = false
-                                                    triggerInteraction()
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Mute / Unmute
-                                IconButton(
-                                    onClick = {
-                                        isMuted = !isMuted
-                                        exoPlayer.volume = if (isMuted) 0f else 1f
                                         triggerInteraction()
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
-                                        contentDescription = if (isMuted) "Unmute" else "Mute",
-                                        tint = if (isMuted) VlcOrange else Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // Buttery-Smooth Scrubber with Buffered Position Display
-                        val totalDuration = if (durationMs > 0) durationMs.toFloat() else 100f
-                        val currentRatio = if (isScrubbing) {
-                            scrubRatio
-                        } else {
-                            (currentPositionMs.toFloat() / totalDuration).coerceIn(0f, 1f)
-                        }
-
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            // Secondary buffer indicator
-                            val bufferRatio = (bufferedPositionMs.toFloat() / totalDuration).coerceIn(0f, 1f)
-                            if (bufferRatio > 0f) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(bufferRatio)
-                                        .height(4.dp)
-                                        .align(Alignment.CenterStart)
-                                        .padding(horizontal = 4.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(Color.White.copy(alpha = 0.35f))
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AspectRatio,
+                                    contentDescription = "Aspect Ratio",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = aspectRatioMode.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
 
-                            // Interactive Seek Slider
-                            Slider(
-                                value = currentRatio,
-                                onValueChange = { ratio ->
-                                    isScrubbing = true
-                                    scrubRatio = ratio
-                                    triggerInteraction()
-                                },
-                                onValueChangeFinished = {
-                                    val targetMs = (scrubRatio * totalDuration).toLong()
-                                    exoPlayer.seekTo(targetMs)
-                                    currentPositionMs = targetMs
-                                    isScrubbing = false
-                                    triggerInteraction()
-                                },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = VlcOrange,
-                                    activeTrackColor = VlcOrange,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                                ),
+                            // Playback Speed Toggle
+                            Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("vlc_seek_slider")
-                            )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.12f))
+                                    .clickable {
+                                        playbackSpeed = when (playbackSpeed) {
+                                            1.0f -> 1.25f
+                                            1.25f -> 1.5f
+                                            1.5f -> 2.0f
+                                            else -> 1.0f
+                                        }
+                                        mediaPlayerRef?.let { mp ->
+                                            try {
+                                                mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed)
+                                            } catch (_: Exception) {}
+                                        }
+                                        triggerInteraction()
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = "Speed",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "${playbackSpeed}x",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // Mute / Unmute
+                            IconButton(
+                                onClick = {
+                                    isMuted = !isMuted
+                                    mediaPlayerRef?.let { mp ->
+                                        if (isMuted) mp.setVolume(0f, 0f) else mp.setVolume(1f, 1f)
+                                    }
+                                    triggerInteraction()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                                    tint = if (isMuted) VlcOrange else Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // VLC Orange Seek Slider
+                    val effectiveDuration = if (durationMs > 0) durationMs.toFloat() else 100f
+                    val progressRatio = (currentPositionMs.toFloat() / effectiveDuration).coerceIn(0f, 1f)
+
+                    Slider(
+                        value = progressRatio,
+                        onValueChange = { ratio ->
+                            triggerInteraction()
+                            val targetMs = (ratio * effectiveDuration).toLong()
+                            currentPositionMs = targetMs
+                            videoViewRef?.seekTo(targetMs.toInt())
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = VlcOrange,
+                            activeTrackColor = VlcOrange,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("vlc_seek_slider")
+                    )
                 }
             }
         }
@@ -825,6 +617,12 @@ fun VlcMediaPlayerScreen(
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            videoViewRef?.stopPlayback()
+        }
     }
 }
 
