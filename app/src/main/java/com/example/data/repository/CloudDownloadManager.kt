@@ -119,7 +119,7 @@ object CloudDownloadManager {
         )
 
         _tasks.update { listOf(initialTask) + it }
-        savePersistedTasks()
+        // Cloud download state is authoritative on the server; do not persist this task locally.
 
         scope.launch {
             injectDownloadToServer(taskId, cleanUrl, filename, destinationFolder, onComplete)
@@ -389,13 +389,7 @@ object CloudDownloadManager {
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
 
-        val candidateEndpoints = listOf(
-            "/api/files/remote-download",
-            "/api/download",
-            "/api/download/start",
-            "/api/tasks/download",
-            "/api/cloud-download"
-        )
+        val candidateEndpoints = listOf("/api/files/remote-download")
 
         val payload = JSONObject().apply {
             put("url", url)
@@ -413,6 +407,7 @@ object CloudDownloadManager {
             try {
                 val req = Request.Builder()
                     .url("$baseUrl$endpoint")
+                    .header("Authorization", "Bearer ${ApiClient.authInterceptor.getToken().orEmpty()}")
                     .post(payload)
                     .build()
                 val resp = client.newCall(req).execute()
@@ -438,8 +433,8 @@ object CloudDownloadManager {
                 it.copy(
                     id = serverAssignedId ?: it.id,
                     status = CloudDownloadStatus.DOWNLOADING,
-                    speedText = "Injected to Server • Downloading on Server...",
-                    progressPercent = 5
+                    speedText = "Server-side download in progress...",
+                    progressPercent = 0
                 )
             }
             savePersistedTasks()
@@ -467,26 +462,11 @@ object CloudDownloadManager {
             .readTimeout(8, TimeUnit.SECONDS)
             .build()
 
-        val endpoints = when (action) {
-            "pause" -> listOf(
-                "/api/files/remote-download/pause",
-                "/api/download/pause",
-                "/api/tasks/$taskId/pause",
-                "/api/download/$taskId/pause"
-            )
-            "resume" -> listOf(
-                "/api/files/remote-download/resume",
-                "/api/download/resume",
-                "/api/tasks/$taskId/resume",
-                "/api/download/$taskId/resume"
-            )
-            "cancel" -> listOf(
-                "/api/files/remote-download/cancel",
-                "/api/download/cancel",
-                "/api/tasks/$taskId/cancel",
-                "/api/download/$taskId/cancel"
-            )
-            else -> emptyList()
+        val endpoint = when (action) {
+            "pause" -> "/api/files/remote-download/pause"
+            "resume" -> "/api/files/remote-download/resume"
+            "cancel" -> "/api/files/remote-download/cancel"
+            else -> return
         }
 
         val payload = JSONObject().apply {
@@ -495,13 +475,10 @@ object CloudDownloadManager {
             put("action", action)
         }.toString().toRequestBody("application/json".toMediaTypeOrNull())
 
-        for (ep in endpoints) {
-            try {
-                val req = Request.Builder().url("$baseUrl$ep").post(payload).build()
-                val resp = client.newCall(req).execute()
-                if (resp.isSuccessful) break
-            } catch (_: Exception) {}
-        }
+        try {
+            val req = Request.Builder().url("$baseUrl$endpoint").header("Authorization", "Bearer ${ApiClient.authInterceptor.getToken().orEmpty()}").post(payload).build()
+            client.newCall(req).execute().use { }
+        } catch (_: Exception) {}
         syncWithServerTasks(baseUrl)
     }
 
@@ -539,18 +516,13 @@ object CloudDownloadManager {
             .readTimeout(6, TimeUnit.SECONDS)
             .build()
 
-        val candidatePaths = listOf(
-            "/api/files/remote-download",
-            "/api/download/status",
-            "/api/download/tasks",
-            "/api/tasks?type=download",
-            "/api/downloads"
-        )
+        val candidatePaths = listOf("/api/files/remote-download")
 
         for (path in candidatePaths) {
             try {
                 val req = Request.Builder()
                     .url("$baseUrl$path")
+                    .header("Authorization", "Bearer ${ApiClient.authInterceptor.getToken().orEmpty()}")
                     .get()
                     .build()
                 val resp = client.newCall(req).execute()
@@ -892,7 +864,7 @@ object CloudDownloadManager {
         try {
             val file = File(appCtx.filesDir, PERSISTENCE_FILE_NAME)
             val jsonArray = JSONArray()
-            for (t in _tasks.value) {
+            for (t in _tasks.value.filter { it.isUpload }) {
                 val obj = JSONObject().apply {
                     put("id", t.id)
                     put("url", t.url)
@@ -946,6 +918,8 @@ object CloudDownloadManager {
                     status = CloudDownloadStatus.PAUSED
                     speedText = "Interrupted (App Closed) • Tap Resume"
                 }
+
+                if (!obj.optBoolean("isUpload", false)) continue
 
                 val task = CloudDownloadTask(
                     id = obj.optString("id", UUID.randomUUID().toString()),
