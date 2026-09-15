@@ -2,7 +2,9 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -13,8 +15,10 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
 enum class ThemeMode {
     SYSTEM,
@@ -29,43 +33,59 @@ object ThemeController {
 val LocalThemeController = compositionLocalOf { ThemeController }
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Cyan80,
-    onPrimary = Color(0xFF00354E),
-    primaryContainer = Color(0xFF004D70),
-    onPrimaryContainer = Color(0xFFC4E7FF),
-    secondary = Slate80,
-    onSecondary = Color(0xFF1E293B),
-    secondaryContainer = Color(0xFF334155),
-    onSecondaryContainer = Color(0xFFE2E8F0),
-    tertiary = Color(0xFF38BDF8),
+    primary = Amber60,
+    onPrimary = Color(0xFF2B1A00),
+    primaryContainer = Color(0xFF3D2A08),
+    onPrimaryContainer = Amber80,
+    secondary = Teal60,
+    onSecondary = Color(0xFF00201B),
+    secondaryContainer = Color(0xFF0F332C),
+    onSecondaryContainer = Teal80,
+    tertiary = Teal80,
     background = DarkBackground,
-    onBackground = Color(0xFFF1F5F9),
+    onBackground = Color(0xFFEDEBE7),
     surface = DarkSurface,
-    onSurface = Color(0xFFF1F5F9),
+    onSurface = Color(0xFFEDEBE7),
     surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = Color(0xFF94A3B8),
+    onSurfaceVariant = Graphite80,
     outline = DarkBorder,
     error = StatusStopped
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Cyan40,
+    primary = Amber40,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFC4E7FF),
-    onPrimaryContainer = Color(0xFF001E2E),
-    secondary = Slate40,
+    primaryContainer = Color(0xFFFCE4BB),
+    onPrimaryContainer = Color(0xFF2B1A00),
+    secondary = Teal40,
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE2E8F0),
-    onSecondaryContainer = Color(0xFF0F172A),
-    tertiary = Color(0xFF0284C7),
+    secondaryContainer = Color(0xFFD3EFE9),
+    onSecondaryContainer = Color(0xFF00201B),
+    tertiary = Teal40,
     background = LightBackground,
-    onBackground = Color(0xFF0F172A),
+    onBackground = Color(0xFF1B1A17),
     surface = LightSurface,
-    onSurface = Color(0xFF0F172A),
+    onSurface = Color(0xFF1B1A17),
     surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = Color(0xFF475569),
+    onSurfaceVariant = Graphite40,
     outline = LightBorder,
     error = StatusStopped
+)
+
+// Deliberately uneven corner radii — a control-panel language rather than the
+// "one radius on everything" SaaS-card default. Sharp for dense/technical
+// surfaces, a touch softer only where content needs breathing room.
+val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(10.dp),
+    large = RoundedCornerShape(14.dp),
+    extraLarge = RoundedCornerShape(20.dp)
+)
+
+/** Subtle brand glow used behind live/online indicators. Use sparingly. */
+fun brandGlow(color: Color): Brush = Brush.radialGradient(
+    colors = listOf(color.copy(alpha = 0.35f), color.copy(alpha = 0f))
 )
 
 @Composable
@@ -93,6 +113,7 @@ fun DhilipHomeTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,
+            shapes = AppShapes,
             content = content
         )
     }

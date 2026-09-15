@@ -29,6 +29,9 @@ object CloudDownloadManager {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private val activeJobs = mutableMapOf<String, Job>()
 
+    // Maps our local task id -> the server's own task id, needed to cancel/poll correctly.
+    private val serverTaskIds = mutableMapOf<String, String>()
+
     private val _tasks = MutableStateFlow<List<CloudDownloadTask>>(emptyList())
     val tasks: StateFlow<List<CloudDownloadTask>> = _tasks.asStateFlow()
 
@@ -123,7 +126,86 @@ object CloudDownloadManager {
                 put("destination", destinationFolder)
             }
 
-            // Use the real server-side download API. Do not simulate progress or completion.\n            val endpoint = "$baseUrl/api/files/remote-download"\n            val request = Request.Builder()\n                .url(endpoint)\n                .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))\n                .build()\n\n            val response = ApiClient.okHttpClient.newCall(request).execute()\n            val body = response.body?.string().orEmpty()\n            if (!response.isSuccessful) {\n                updateTask(taskId) {\n                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server download request failed (HTTP ${response.code})")\n                }\n                return\n            }\n\n            val root = JSONObject(body)\n            val data = root.optJSONObject("data") ?: root\n            val serverTaskId = data.optString("task_id", data.optString("id", ""))\n            if (serverTaskId.isBlank()) {\n                updateTask(taskId) {\n                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server did not return a download task ID")\n                }\n                return\n            }\n\n            var isFinished = false\n            var pollCount = 0\n            while (!isFinished && pollCount < 240) {\n                delay(1000)\n                pollCount++\n                try {\n                    val statusUrl = "$baseUrl/api/files/remote-download?task_id=${java.net.URLEncoder.encode(serverTaskId, "UTF-8")}"\n                    val pollRequest = Request.Builder().url(statusUrl).get().build()\n                    val pollResponse = ApiClient.okHttpClient.newCall(pollRequest).execute()\n                    val pollBody = pollResponse.body?.string().orEmpty()\n                    if (!pollResponse.isSuccessful) {\n                        updateTask(taskId) { it.copy(speedText = "Waiting for server…") }\n                        continue\n                    }\n                    val pollRoot = JSONObject(pollBody)\n                    val pollJson = pollRoot.optJSONObject("data") ?: pollRoot\n                    val status = pollJson.optString("status", "queued").lowercase()\n                    val percent = pollJson.optInt("progress_percent", 0).coerceIn(0, 100)\n                    val downloaded = pollJson.optLong("downloaded_bytes", 0L)\n                    val total = pollJson.optLong("total_bytes", 0L)\n                    val speed = pollJson.optString("speed", if (status == "queued") "Queued on server" else "Server downloading")\n\n                    when (status) {\n                        "completed", "finished" -> {\n                            isFinished = true\n                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.COMPLETED, progressPercent = 100, downloadedBytes = downloaded, totalBytes = total, speedText = "Stored on Server") }\n                        }\n                        "failed", "error" -> {\n                            isFinished = true\n                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, errorMessage = pollJson.optString("error", "Server download failed")) }\n                        }\n                        else -> updateTask(taskId) { it.copy(status = CloudDownloadStatus.DOWNLOADING, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, speedText = speed) }\n                    }\n                } catch (e: Exception) {\n                    Log.d(TAG, "Poll error: ${e.message}")\n                }\n            }\n\n            if (!isFinished) {\n                updateTask(taskId) {\n                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server download timed out; check the server task before retrying")\n                }\n                return\n            }\n\n            HttpServerRepository.notifyFilesChanged(destinationFolder)
+            // Use the real server-side download API. Do not simulate progress or completion.
+            val endpoint = "$baseUrl/api/files/remote-download"
+            val request = Request.Builder()
+                .url(endpoint)
+                .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+
+            val response = ApiClient.okHttpClient.newCall(request).execute()
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                updateTask(taskId) {
+                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server download request failed (HTTP ${response.code})")
+                }
+                return
+            }
+
+            val root = JSONObject(body)
+            val data = root.optJSONObject("data") ?: root
+            val serverTaskId = data.optString("task_id", data.optString("id", ""))
+            if (serverTaskId.isBlank()) {
+                updateTask(taskId) {
+                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server did not return a download task ID")
+                }
+                return
+            }
+            serverTaskIds[taskId] = serverTaskId
+
+            var isFinished = false
+            var pollCount = 0
+            while (!isFinished && pollCount < 240) {
+                delay(1000)
+                pollCount++
+
+                // If the user cancelled locally, stop polling; cancelDownload() already
+                // told the server to stop and marked the task CANCELLED.
+                if (activeJobs[taskId]?.isCancelled == true) {
+                    return
+                }
+
+                try {
+                    val statusUrl = "$baseUrl/api/files/remote-download?task_id=${java.net.URLEncoder.encode(serverTaskId, "UTF-8")}"
+                    val pollRequest = Request.Builder().url(statusUrl).get().build()
+                    val pollResponse = ApiClient.okHttpClient.newCall(pollRequest).execute()
+                    val pollBody = pollResponse.body?.string().orEmpty()
+                    if (!pollResponse.isSuccessful) {
+                        updateTask(taskId) { it.copy(speedText = "Waiting for server…") }
+                        continue
+                    }
+                    val pollRoot = JSONObject(pollBody)
+                    val pollJson = pollRoot.optJSONObject("data") ?: pollRoot
+                    val status = pollJson.optString("status", "queued").lowercase()
+                    val percent = pollJson.optInt("progress_percent", 0).coerceIn(0, 100)
+                    val downloaded = pollJson.optLong("downloaded_bytes", 0L)
+                    val total = pollJson.optLong("total_bytes", 0L)
+                    val speed = pollJson.optString("speed", if (status == "queued") "Queued on server" else "Server downloading")
+
+                    when (status) {
+                        "completed", "finished" -> {
+                            isFinished = true
+                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.COMPLETED, progressPercent = 100, downloadedBytes = downloaded, totalBytes = total, speedText = "Stored on Server") }
+                        }
+                        "failed", "error" -> {
+                            isFinished = true
+                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, errorMessage = pollJson.optString("error", "Server download failed")) }
+                        }
+                        else -> updateTask(taskId) { it.copy(status = CloudDownloadStatus.DOWNLOADING, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, speedText = speed) }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Poll error: ${e.message}")
+                }
+            }
+
+            if (!isFinished) {
+                updateTask(taskId) {
+                    it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server download timed out; check the server task before retrying")
+                }
+                return
+            }
+
+            HttpServerRepository.notifyFilesChanged(destinationFolder)
             onComplete?.invoke()
 
         } catch (e: Exception) {
@@ -133,15 +215,37 @@ object CloudDownloadManager {
                     errorMessage = e.message ?: "Server download error"
                 )
             }
+        } finally {
+            serverTaskIds.remove(taskId)
         }
     }
 
+    /**
+     * Cancels a download both locally (stops polling) and on the server
+     * (tells it to abort the in-progress transfer and clean up the .part file).
+     */
     fun cancelDownload(taskId: String) {
         activeJobs[taskId]?.cancel()
         activeJobs.remove(taskId)
+
+        val serverTaskId = serverTaskIds[taskId]
+        val baseUrl = ServerConfig.baseUrl.value.trimEnd('/')
+
+        if (!serverTaskId.isNullOrBlank() && baseUrl.isNotBlank()) {
+            scope.launch {
+                try {
+                    val cancelUrl = "$baseUrl/api/files/remote-download?task_id=${java.net.URLEncoder.encode(serverTaskId, "UTF-8")}"
+                    val request = Request.Builder().url(cancelUrl).delete().build()
+                    ApiClient.okHttpClient.newCall(request).execute().close()
+                } catch (e: Exception) {
+                    Log.d(TAG, "Cancel request error: ${e.message}")
+                }
+            }
+        }
+
         updateTask(taskId) {
             it.copy(
-                status = CloudDownloadStatus.FAILED,
+                status = CloudDownloadStatus.CANCELLED,
                 errorMessage = "Cancelled by user"
             )
         }
