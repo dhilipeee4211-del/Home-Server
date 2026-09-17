@@ -3,6 +3,7 @@ package com.example.data.model
 enum class CloudDownloadStatus {
     QUEUED,
     DOWNLOADING,
+    PAUSED,
     STORING_TO_SERVER,
     COMPLETED,
     FAILED,
