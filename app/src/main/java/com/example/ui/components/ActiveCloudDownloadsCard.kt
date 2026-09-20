@@ -225,7 +225,7 @@ private fun CloudDownloadTaskRow(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
-                        CloudDownloadStatus.DOWNLOADING, CloudDownloadStatus.STORING_TO_SERVER, CloudDownloadStatus.QUEUED -> {
+                        CloudDownloadStatus.DOWNLOADING, CloudDownloadStatus.STORING_TO_SERVER, CloudDownloadStatus.QUEUED, CloudDownloadStatus.PAUSED -> {
                             Text(
                                 text = "${task.progressPercent}%",
                                 style = MaterialTheme.typography.labelSmall,

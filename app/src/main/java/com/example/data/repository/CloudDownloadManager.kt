@@ -6,7 +6,6 @@ import com.example.data.model.CloudDownloadStatus
 import com.example.data.model.CloudDownloadTask
 import com.example.network.ApiClient
 import com.example.network.ServerConfig
-import com.example.network.models.RemoteDownloadCancelRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,14 +16,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
+/**
+ * Thin client for server-authoritative downloads.
+ *
+ * The Android device NEVER downloads the cloud file. It submits a job to the
+ * Home Server and observes the persistent server job until completion.
+ */
 object CloudDownloadManager {
     private const val TAG = "CloudDownloadManager"
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -33,13 +41,37 @@ object CloudDownloadManager {
     private val _tasks = MutableStateFlow<List<CloudDownloadTask>>(emptyList())
     val tasks: StateFlow<List<CloudDownloadTask>> = _tasks.asStateFlow()
 
-    fun initialize(context: Context) = Unit
+    fun initialize(context: Context) {
+        // Rehydrate from the server. Local Android cache is deliberately ignored.
+        scope.launch { syncFromServer() }
+    }
 
     fun deriveFilename(urlStr: String): String = try {
         val raw = URL(urlStr).path.substringAfterLast('/').trim()
         if (raw.isNotBlank()) URLDecoder.decode(raw, "UTF-8")
         else "download_${System.currentTimeMillis()}.bin"
     } catch (_: Exception) { "download_${System.currentTimeMillis()}.bin" }
+
+    private fun authBuilder(url: String): Request.Builder {
+        val builder = Request.Builder().url(url).header("Accept", "application/json")
+        ApiClient.authInterceptor.getToken()?.takeIf { it.isNotBlank() }?.let {
+            builder.header("Authorization", "Bearer $it")
+        }
+        return builder
+    }
+
+    private fun executeFast(request: Request): okhttp3.Response {
+        // A command/status request must fail fast. The actual file transfer happens
+        // in the Debian server worker, so this timeout never limits the cloud file.
+        return ApiClient.okHttpClient.newBuilder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .build()
+            .newCall(request)
+            .execute()
+    }
 
     fun startDownload(
         url: String,
@@ -49,117 +81,249 @@ object CloudDownloadManager {
     ): String {
         val taskId = "dl_${UUID.randomUUID().toString().take(10)}"
         val filename = customFilename?.trim().takeUnless { it.isNullOrBlank() } ?: deriveFilename(url)
-        _tasks.update { listOf(CloudDownloadTask(taskId, url.trim(), filename, destinationFolder, status = CloudDownloadStatus.QUEUED, speedText = "Connecting to server…")) + it }
-        activeJobs[taskId] = scope.launch { execute(taskId, url.trim(), filename, destinationFolder, onComplete) }
+        _tasks.update {
+            listOf(
+                CloudDownloadTask(
+                    taskId, url.trim(), filename, destinationFolder,
+                    status = CloudDownloadStatus.STORING_TO_SERVER,
+                    speedText = "Sending to server…"
+                )
+            ) + it
+        }
+        activeJobs[taskId] = scope.launch {
+            execute(taskId, url.trim(), filename, destinationFolder, onComplete)
+        }
         return taskId
     }
 
-    private suspend fun execute(taskId: String, url: String, filename: String, destination: String, onComplete: (() -> Unit)?) {
-        val api = ApiClient.getApiService()
-        if (api == null || ServerConfig.baseUrl.value.isBlank()) {
+    private suspend fun execute(
+        taskId: String,
+        url: String,
+        filename: String,
+        destination: String,
+        onComplete: (() -> Unit)?
+    ) {
+        if (!ServerConfig.isConfigured()) {
             updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server is not configured") }
             return
         }
         try {
-            updateTask(taskId) { it.copy(status = CloudDownloadStatus.STORING_TO_SERVER, speedText = "Sending download request…") }
+            updateTask(taskId) { it.copy(status = CloudDownloadStatus.STORING_TO_SERVER, speedText = "Sending to server…") }
+
             val payload = JSONObject().apply {
                 put("url", url)
                 put("filename", filename)
-                put("destination", destination)
-            }
-            val request = okhttp3.Request.Builder()
-                .url(ServerConfig.baseUrl.value.trimEnd('/') + "/api/files/remote-download")
-                .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                put("destination", destination.trim().ifBlank { "/" })
+            }.toString()
+
+            val startUrl = ServerConfig.baseUrl.value.trimEnd('/') + "/api/files/remote-download"
+            val request = authBuilder(startUrl)
+                .header("Content-Type", "application/json")
+                .post(payload.toRequestBody("application/json".toMediaType()))
                 .build()
 
-            val response = ApiClient.okHttpClient.newCall(request).execute()
-            val body = response.use { it.body?.string().orEmpty() }
-            if (!response.isSuccessful) throw IllegalStateException(parseError(body, "Server rejected download (${response.code})"))
-            val data = JSONObject(body).optJSONObject("data") ?: JSONObject(body)
-            val serverId = data.optString("task_id").ifBlank { throw IllegalStateException("Server did not return a task ID") }
-            serverTaskIds[taskId] = serverId
-
-            var done = false
-            var transientFailures = 0
-            while (!done) {
-                delay(700)
-                try {
-                    val statusUrl = ServerConfig.baseUrl.value.trimEnd('/') + "/api/files/remote-download?task_id=" + URLEncoder.encode(serverId, "UTF-8")
-                    val poll = ApiClient.okHttpClient.newCall(okhttp3.Request.Builder().url(statusUrl).get().build()).execute()
-                    val pollBody = poll.use { it.body?.string().orEmpty() }
-                    if (!poll.isSuccessful) throw IllegalStateException("HTTP ${poll.code}")
-                    val obj = JSONObject(pollBody).optJSONObject("data") ?: JSONObject(pollBody)
-                    val status = obj.optString("status", "queued").lowercase()
-                    val downloaded = obj.optLong("downloaded_bytes", 0L)
-                    val total = obj.optLong("total_bytes", 0L)
-                    val percent = obj.optInt("progress_percent", if (total > 0) ((downloaded * 100) / total).toInt() else 0).coerceIn(0, 100)
-                    val speedBps = obj.optLong("speed_bps", 0L)
-                    val speed = if (speedBps > 0) formatRate(speedBps) else when (status) {
-                        "queued" -> "Queued on server…"
-                        "cancelling" -> "Cancelling…"
-                        else -> "Preparing stream…"
-                    }
-                    transientFailures = 0
-                    when (status) {
-                        "completed", "finished" -> {
-                            done = true
-                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.COMPLETED, progressPercent = 100, downloadedBytes = downloaded, totalBytes = total, speedText = "Completed • ${formatBytes(downloaded)}") }
-                            HttpServerRepository.notifyFilesChanged(destination)
-                            onComplete?.invoke()
-                        }
-                        "cancelled" -> {
-                            done = true
-                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.CANCELLED, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, speedText = "Cancelled") }
-                        }
-                        "failed", "error" -> {
-                            done = true
-                            updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, errorMessage = obj.optString("error", "Server download failed")) }
-                        }
-                        else -> updateTask(taskId) { it.copy(status = CloudDownloadStatus.DOWNLOADING, progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, speedText = speed) }
-                    }
-                } catch (e: Exception) {
-                    transientFailures++
-                    if (transientFailures >= 10) throw IllegalStateException("No response from server while checking download")
-                    updateTask(taskId) { it.copy(speedText = "Reconnecting to server… ($transientFailures/10)") }
-                }
+            val response = try {
+                executeFast(request)
+            } catch (e: Exception) {
+                throw IllegalStateException("Server did not respond to download request: ${e.message ?: "connection timeout"}")
             }
+
+            val body = response.use { it.body?.string().orEmpty() }
+            if (!response.isSuccessful) {
+                throw IllegalStateException(parseError(body, "Server rejected download (HTTP ${response.code})"))
+            }
+
+            val data = JSONObject(body).optJSONObject("data") ?: JSONObject(body)
+            val serverId = data.optString("task_id")
+            if (serverId.isBlank()) throw IllegalStateException("Server did not return a download task ID")
+
+            serverTaskIds[taskId] = serverId
+            pollServerTask(taskId, serverId, onComplete)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Cloud download failed", e)
-            updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, errorMessage = e.message ?: "Cloud download failed") }
+            Log.w(TAG, "Cloud download command failed", e)
+            updateTask(taskId) {
+                it.copy(status = CloudDownloadStatus.FAILED, errorMessage = e.message ?: "Server download failed")
+            }
         } finally {
             activeJobs.remove(taskId)
             serverTaskIds.remove(taskId)
         }
     }
 
-    fun cancelDownload(taskId: String) {
-        scope.launch {
-            val serverId = serverTaskIds[taskId]
-            if (serverId.isNullOrBlank()) {
-                activeJobs.remove(taskId)?.cancel()
-                updateTask(taskId) { it.copy(status = CloudDownloadStatus.CANCELLED, speedText = "Cancelled") }
-                return@launch
-            }
+    private suspend fun pollServerTask(taskId: String, serverId: String, onComplete: (() -> Unit)?) {
+        var transientFailures = 0
+        while (true) {
+            delay(800)
             try {
-                val api = ApiClient.getApiService()
-                if (api != null) {
-                    val response = api.cancelRemoteDownload(RemoteDownloadCancelRequest(serverId))
-                    if (!response.isSuccessful) throw IllegalStateException("Server returned HTTP ${response.code()}")
+                val statusUrl = ServerConfig.baseUrl.value.trimEnd('/') +
+                    "/api/files/remote-download?task_id=" +
+                    URLEncoder.encode(serverId, "UTF-8")
+                val poll = executeFast(authBuilder(statusUrl).get().build())
+                val body = poll.use { it.body?.string().orEmpty() }
+                if (!poll.isSuccessful) throw IllegalStateException("HTTP ${poll.code}: ${parseError(body, "status request failed")}")
+
+                val obj = JSONObject(body).optJSONObject("data") ?: JSONObject(body)
+                val status = obj.optString("status", "queued").lowercase()
+                val downloaded = obj.optLong("downloaded_bytes", 0L)
+                val total = obj.optLong("total_bytes", 0L)
+                val percent = obj.optInt(
+                    "progress_percent",
+                    if (total > 0) ((downloaded * 100) / total).toInt() else 0
+                ).coerceIn(0, 100)
+                val speedBps = obj.optLong("speed_bps", 0L)
+                val speed = when {
+                    speedBps > 0 -> formatRate(speedBps)
+                    status == "queued" -> "Queued on server…"
+                    status == "paused" -> "Paused on server"
+                    status == "cancelling" -> "Cancelling…"
+                    else -> "Preparing server download…"
                 }
-                updateTask(taskId) { it.copy(status = CloudDownloadStatus.CANCELLED, speedText = "Cancellation requested") }
+
+                transientFailures = 0
+                when (status) {
+                    "completed", "finished" -> {
+                        updateTask(taskId) {
+                            it.copy(
+                                status = CloudDownloadStatus.COMPLETED,
+                                progressPercent = 100,
+                                downloadedBytes = downloaded,
+                                totalBytes = total,
+                                speedText = "Completed • ${formatBytes(downloaded)}"
+                            )
+                        }
+                        HttpServerRepository.notifyFilesChanged(obj.optString("destination", ""))
+                        onComplete?.invoke()
+                        return
+                    }
+                    "cancelled" -> {
+                        updateTask(taskId) {
+                            it.copy(status = CloudDownloadStatus.CANCELLED, progressPercent = percent,
+                                downloadedBytes = downloaded, totalBytes = total, speedText = "Cancelled")
+                        }
+                        return
+                    }
+                    "failed", "error" -> {
+                        updateTask(taskId) {
+                            it.copy(status = CloudDownloadStatus.FAILED, progressPercent = percent,
+                                downloadedBytes = downloaded, totalBytes = total,
+                                errorMessage = obj.optString("error", "Server download failed"))
+                        }
+                        return
+                    }
+                    "paused" -> updateTask(taskId) {
+                        it.copy(status = CloudDownloadStatus.PAUSED, progressPercent = percent,
+                            downloadedBytes = downloaded, totalBytes = total, speedText = speed)
+                    }
+                    else -> updateTask(taskId) {
+                        it.copy(status = if (status == "queued") CloudDownloadStatus.STORING_TO_SERVER else CloudDownloadStatus.DOWNLOADING,
+                            progressPercent = percent, downloadedBytes = downloaded, totalBytes = total, speedText = speed)
+                    }
+                }
             } catch (e: Exception) {
-                updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Unable to cancel on server: ${e.message}") }
+                transientFailures++
+                updateTask(taskId) { it.copy(speedText = "Reconnecting to server…") }
+                if (transientFailures >= 20) {
+                    throw IllegalStateException("Server connection lost while reading download status")
+                }
+            }
+        }
+    }
+
+    suspend fun syncFromServer() {
+        if (!ServerConfig.isConfigured()) return
+        try {
+            val url = ServerConfig.baseUrl.value.trimEnd('/') + "/api/files/remote-download"
+            val response = executeFast(authBuilder(url).get().build())
+            val body = response.use { it.body?.string().orEmpty() }
+            if (!response.isSuccessful) return
+            val root = JSONObject(body)
+            val data = root.opt("data")
+            val arr = when (data) {
+                is JSONArray -> data
+                else -> JSONArray()
+            }
+            val serverTasks = mutableListOf<CloudDownloadTask>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("task_id")
+                if (id.isBlank()) continue
+                val status = when (o.optString("status").lowercase()) {
+                    "completed" -> CloudDownloadStatus.COMPLETED
+                    "failed" -> CloudDownloadStatus.FAILED
+                    "cancelled" -> CloudDownloadStatus.CANCELLED
+                    "paused" -> CloudDownloadStatus.PAUSED
+                    "downloading" -> CloudDownloadStatus.DOWNLOADING
+                    else -> CloudDownloadStatus.STORING_TO_SERVER
+                }
+                val bytes = o.optLong("downloaded_bytes")
+                val total = o.optLong("total_bytes")
+                val speed = o.optLong("speed_bps")
+                serverTasks += CloudDownloadTask(
+                    id = id,
+                    url = o.optString("url"),
+                    filename = o.optString("filename"),
+                    destinationFolder = o.optString("destination"),
+                    progressPercent = o.optInt("progress_percent", if (total > 0) ((bytes * 100) / total).toInt() else 0),
+                    downloadedBytes = bytes,
+                    totalBytes = total,
+                    speedText = if (speed > 0) formatRate(speed) else status.name.replace('_', ' '),
+                    status = status,
+                    errorMessage = o.optString("error").takeIf { it.isNotBlank() },
+                    timestamp = (o.optDouble("created_at", System.currentTimeMillis() / 1000.0) * 1000).toLong()
+                )
+                serverTaskIds[id] = id
+            }
+            _tasks.value = serverTasks
+        } catch (e: Exception) {
+            Log.w(TAG, "Server download sync failed: ${e.message}")
+        }
+    }
+
+    fun cancelDownload(taskId: String) {
+        sendControl(taskId, "cancel")
+    }
+
+    fun pauseDownload(taskId: String) {
+        sendControl(taskId, "pause")
+    }
+
+    fun resumeDownload(taskId: String) {
+        sendControl(taskId, "resume")
+    }
+
+    private fun sendControl(taskId: String, action: String) {
+        scope.launch {
+            val serverId = serverTaskIds[taskId] ?: taskId
+            try {
+                val payload = JSONObject().put("task_id", serverId).toString()
+                val url = ServerConfig.baseUrl.value.trimEnd('/') + "/api/files/remote-download/$action"
+                val response = executeFast(
+                    authBuilder(url).header("Content-Type", "application/json")
+                        .post(payload.toRequestBody("application/json".toMediaType())).build()
+                )
+                val body = response.use { it.body?.string().orEmpty() }
+                if (!response.isSuccessful) throw IllegalStateException(parseError(body, "Server returned HTTP ${response.code}"))
+                // Re-read server truth immediately instead of guessing local state.
+                syncFromServer()
+            } catch (e: Exception) {
+                updateTask(taskId) { it.copy(status = CloudDownloadStatus.FAILED, errorMessage = "Server control failed: ${e.message}") }
             }
         }
     }
 
     fun clearCompleted() {
-        _tasks.update { list -> list.filterNot { it.status == CloudDownloadStatus.COMPLETED || it.status == CloudDownloadStatus.CANCELLED || it.status == CloudDownloadStatus.FAILED } }
+        // Local UI cleanup only; the server database remains authoritative.
+        _tasks.update { list -> list.filterNot {
+            it.status == CloudDownloadStatus.COMPLETED ||
+            it.status == CloudDownloadStatus.CANCELLED ||
+            it.status == CloudDownloadStatus.FAILED
+        } }
     }
 
-    private fun updateTask(id: String, transform: (CloudDownloadTask) -> CloudDownloadTask) = _tasks.update { list -> list.map { if (it.id == id) transform(it) else it } }
+    private fun updateTask(id: String, transform: (CloudDownloadTask) -> CloudDownloadTask) =
+        _tasks.update { list -> list.map { if (it.id == id) transform(it) else it } }
 
     private fun parseError(body: String, fallback: String): String = try {
         JSONObject(body).optJSONObject("error")?.optString("message", fallback) ?: fallback
@@ -177,5 +341,4 @@ object CloudDownloadManager {
         bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
         else -> "$bytes B"
     }
-
 }
