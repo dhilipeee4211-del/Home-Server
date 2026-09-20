@@ -59,20 +59,25 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
 import com.example.data.model.FileItem
 import com.example.data.model.FileType
 import com.example.data.repository.CloudDownloadManager
@@ -177,7 +182,42 @@ fun FilesScreen(
 
 @Composable private fun ActionChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) { Row(Modifier.clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { Text(label, fontWeight = FontWeight.SemiBold); Spacer(Modifier.width(8.dp)); Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) } }
 
-@Composable private fun FileRowPro(file: FileItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface.copy(.72f)).clickable(onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically) { FileGlyph(file.type, file.isFolder); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(file.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(if (file.isFolder) "Folder" else listOfNotNull(file.formattedSize, file.modifiedDate).joinToString(" • "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Box { var open by remember { mutableStateOf(false) }; IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, "Actions") }; DropdownMenu(open, { open = false }) { DropdownMenuItem(text = { Text("Open") }, onClick = { open = false; onOpen() }); if (admin) { DropdownMenuItem(text = { Text("Edit / Rename") }, onClick = { open = false; onRename() }); DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { open = false; onDelete() }) } else DropdownMenuItem(text = { Text("Admin controls locked") }, onClick = { open = false }) } } } }
+@Composable private fun FileRowPro(file: FileItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { 
+    var isFocused by remember { mutableStateOf(false) }
+    
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .scale(if (isFocused) 1.02f else 1f)
+            .onFocusChanged { isFocused = it.isFocused }
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isFocused) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface.copy(.72f))
+            .border(2.dp, if (isFocused) Color(0xFF42C7FF) else Color.Transparent, RoundedCornerShape(16.dp))
+            .focusable()
+            .clickable(onClick = onOpen)
+            .padding(12.dp), 
+        verticalAlignment = Alignment.CenterVertically
+    ) { 
+        FileGlyph(file.type, file.isFolder); 
+        Spacer(Modifier.width(12.dp)); 
+        Column(Modifier.weight(1f)) { 
+            Text(file.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); 
+            Text(if (file.isFolder) "Folder" else listOfNotNull(file.formattedSize, file.modifiedDate).joinToString(" • "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) 
+        }; 
+        Box { 
+            var open by remember { mutableStateOf(false) }; 
+            IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, "Actions") }; 
+            DropdownMenu(open, { open = false }) { 
+                DropdownMenuItem(text = { Text("Open") }, onClick = { open = false; onOpen() }); 
+                if (admin) { 
+                    DropdownMenuItem(text = { Text("Edit / Rename") }, onClick = { open = false; onRename() }); 
+                    DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { open = false; onDelete() }) 
+                } else DropdownMenuItem(text = { Text("Admin controls locked") }, onClick = { open = false }) 
+            } 
+        } 
+    } 
+}
 
 @Composable private fun FileTile(file: FileItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface.copy(.78f)).clickable(onClick = onOpen).padding(12.dp)) { FileGlyph(file.type, file.isFolder, 42); Spacer(Modifier.height(8.dp)); Text(file.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(file.formattedSize ?: "Folder", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) { if (admin) { IconButton(onClick = onRename) { Icon(Icons.Default.Edit, "Rename") }; IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) } } } } }
 

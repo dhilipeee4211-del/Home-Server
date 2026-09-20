@@ -3,6 +3,7 @@ package com.example.ui.screens.media
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -54,15 +55,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.scale
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.border
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
 import com.example.data.model.MediaCategory
 import com.example.data.model.MediaItem
 import com.example.network.ApiClient
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MediaCard
 import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
 fun MediaScreen(viewModel: MediaViewModel, onMediaClick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -84,29 +96,105 @@ fun MediaScreen(viewModel: MediaViewModel, onMediaClick: (String) -> Unit, modif
     }
     deleteTarget?.let { item -> AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("Delete media?") }, text = { Text("Delete ${item.title} permanently from the server? Administrator permission is required.") }, confirmButton = { Button(onClick = { deleteTarget = null; viewModel.deleteMedia(item) { ok -> scope.launch { snackbar.showSnackbar(if (ok) "Deleted" else "Delete failed or permission denied") } } }) { Text("Delete") } }, dismissButton = { Button(onClick = { deleteTarget = null }) { Text("Cancel") } }) }
 
-    Scaffold(modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { pad ->
+    Scaffold(
+        modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = Color(0xFF0F172A)
+    ) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(pad), contentPadding = PaddingValues(bottom = 90.dp)) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text("Media Library", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Server-indexed entertainment", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
-                        IconButton(onClick = { viewModel.refreshMedia() }) { if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, "Refresh") }
-                        IconButton(onClick = { grid = !grid }) { Icon(if (grid) Icons.Default.ViewList else Icons.Default.GridView, "View") }
+                        Column(Modifier.weight(1f)) { 
+                            Text("Media Library", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                            Text("Server-indexed entertainment", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelMedium) 
+                        }
+                        IconButton(onClick = { viewModel.refreshMedia() }) { if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF42C7FF)) else Icon(Icons.Default.Refresh, "Refresh", tint = Color.White) }
+                        IconButton(onClick = { grid = !grid }) { Icon(if (grid) Icons.Default.ViewList else Icons.Default.GridView, "View", tint = Color.White) }
                     }
-                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary.copy(.16f), MaterialTheme.colorScheme.surface))).padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.weight(1f), placeholder = { Text("Search your library…") }, singleLine = true) }
-                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(MediaCategory.entries) { c -> FilterChip(selected = c == category, onClick = { viewModel.selectCategory(c) }, label = { Text(c.displayName) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary, selectedLabelColor = MaterialTheme.colorScheme.onPrimary)) } }
+                    
+                    Spacer(Modifier.height(16.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp)),
+                        color = Color.White.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+                    ) {
+                        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Search, null, tint = Color(0xFF42C7FF))
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = search, 
+                                onValueChange = { search = it }, 
+                                modifier = Modifier.weight(1f), 
+                                placeholder = { Text("Search your library…", color = Color.White.copy(alpha = 0.4f)) }, 
+                                singleLine = true,
+                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                    
+                    Spacer(Modifier.height(16.dp))
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(MediaCategory.entries) { c ->
+                            val selected = c == category
+                            androidx.compose.material3.SuggestionChip(
+                                onClick = { viewModel.selectCategory(c) },
+                                label = { Text(c.displayName) },
+                                colors = androidx.compose.material3.SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = if (selected) Color(0xFF42C7FF) else Color.White.copy(alpha = 0.05f),
+                                    labelColor = if (selected) Color.Black else Color.White
+                                ),
+                                border = androidx.compose.material3.SuggestionChipDefaults.suggestionChipBorder(
+                                    enabled = true,
+                                    borderColor = if (selected) Color.Transparent else Color.White.copy(alpha = 0.1f),
+                                    borderWidth = 1.dp
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
                 }
             }
-            item { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("${filtered.size} items", fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f)); Text(if (admin) "Admin controls enabled" else "View mode", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall) } }
-            if (filtered.isEmpty()) item { EmptyState("No media found", "Scan or upload media to your DhilipHome server.") }
-            else if (grid) item {
-                LazyVerticalGrid(columns = GridCells.Adaptive(150.dp), modifier = Modifier.fillMaxWidth().height(((filtered.size + 1) / 2 * 240).coerceAtLeast(260).dp), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(filtered, key = { it.id }) { media ->
-                        BoxMedia(media, admin, { onMediaClick(media.id) }, { renameTarget = media }, { deleteTarget = media })
+            item { 
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { 
+                    Text("${filtered.size} items", fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.7f))
+                    Spacer(Modifier.weight(1f))
+                    Text(if (admin) "Admin controls enabled" else "View mode", color = Color(0xFF42C7FF), style = MaterialTheme.typography.labelSmall) 
+                } 
+            }
+            
+            if (filtered.isEmpty()) {
+                item { EmptyState("No media found", "Scan or upload media to your DhilipHome server.") }
+            } else if (grid) {
+                item {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(150.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(((filtered.size + 1) / 2 * 260).coerceAtLeast(260).dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        userScrollEnabled = false // Inner grid within LazyColumn
+                    ) {
+                        items(filtered, key = { it.id }) { media ->
+                            BoxMedia(media, admin, { onMediaClick(media.id) }, { renameTarget = media }, { deleteTarget = media })
+                        }
                     }
                 }
             } else {
-                items(filtered, key = { it.id }) { media -> MediaListRow(media, admin, { onMediaClick(media.id) }, { renameTarget = media }, { deleteTarget = media }) }
+                items(filtered, key = { it.id }) { media -> 
+                    MediaListRow(media, admin, { onMediaClick(media.id) }, { renameTarget = media }, { deleteTarget = media }) 
+                }
             }
         }
     }
@@ -114,4 +202,32 @@ fun MediaScreen(viewModel: MediaViewModel, onMediaClick: (String) -> Unit, modif
 
 @Composable private fun BoxMedia(item: MediaItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { Column(Modifier.fillMaxWidth()) { MediaCard(media = item, onClick = onOpen, modifier = Modifier.fillMaxWidth(), isCompact = false); if (admin) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { IconButton(onClick = onRename) { Icon(Icons.Default.Edit, "Rename") }; IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) } } } }
 
-@Composable private fun MediaListRow(item: MediaItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface.copy(.78f)).clickable(onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("${item.category.displayName} • ${item.fileSizeBytes}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; if (admin) { IconButton(onClick = onRename) { Icon(Icons.Default.Edit, "Rename") }; IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) } } else { Icon(Icons.Default.MoreVert, "More", tint = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+@Composable private fun MediaListRow(item: MediaItem, admin: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) { 
+    var isFocused by remember { mutableStateOf(false) }
+    
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .scale(if (isFocused) 1.02f else 1f)
+            .onFocusChanged { isFocused = it.isFocused }
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isFocused) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+            .border(2.dp, if (isFocused) Color(0xFF42C7FF) else Color.Transparent, RoundedCornerShape(16.dp))
+            .focusable()
+            .clickable(onClick = onOpen)
+            .padding(12.dp), 
+        verticalAlignment = Alignment.CenterVertically
+    ) { 
+        Column(Modifier.weight(1f)) { 
+            Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White); 
+            Text("${item.category.displayName} • ${item.fileSizeBytes}", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f)) 
+        }; 
+        if (admin) { 
+            IconButton(onClick = onRename) { Icon(Icons.Default.Edit, "Rename", tint = Color.White) }; 
+            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) } 
+        } else { 
+            Icon(Icons.Default.MoreVert, "More", tint = Color.White.copy(alpha = 0.5f)) 
+        } 
+    } 
+}

@@ -7,6 +7,8 @@ import com.example.network.models.CreateFolderRequest
 import com.example.network.models.DiscoveryResponse
 import com.example.network.models.HealthResponse
 import com.example.network.models.NetworkInfoResponse
+import com.example.network.models.RemoteDownloadCancelRequest
+import com.example.network.models.RenameFileRequest
 import com.example.network.models.ServerInfoResponse
 import com.example.network.models.SystemInfoResponse
 import okhttp3.MultipartBody

@@ -550,7 +550,13 @@ object HttpServerRepository : ServerRepository {
     }
 
     private fun updateDiscoveredMedia(files: List<FileItem>) {
-        val mediaFiles = files.filter { it.type == FileType.VIDEO || it.type == FileType.AUDIO || it.type == FileType.IMAGE }
+        // Filter out hidden/temporary files and only keep media
+        val mediaFiles = files.filter { 
+            !it.name.startsWith(".") && 
+            !it.name.endsWith(".tmp") &&
+            (it.type == FileType.VIDEO || it.type == FileType.AUDIO || it.type == FileType.IMAGE) 
+        }
+        
         if (mediaFiles.isEmpty()) return
 
         val newMedia = mediaFiles.map { file ->
@@ -600,7 +606,6 @@ object HttpServerRepository : ServerRepository {
     suspend fun refreshMediaCatalog(category: MediaCategory = MediaCategory.ALL): List<MediaItem> = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext emptyList()
         try {
-            // Keep the server catalog synchronized with the real MEDIA_ROOT before reading it.
             if (category == MediaCategory.ALL) {
                 try { api.triggerMediaScan() } catch (_: Exception) {}
             }
@@ -616,14 +621,19 @@ object HttpServerRepository : ServerRepository {
             if (res.isSuccessful) {
                 val bodyStr = res.body()?.string() ?: ""
                 val items = parseMediaCatalogJson(bodyStr)
-                if (items.isNotEmpty()) {
-                    val map = _discoveredMedia.value.associateBy { it.id }.toMutableMap()
-                    for (it in items) {
-                        map[it.id] = it
-                    }
-                    _discoveredMedia.value = map.values.toList()
-                    return@withContext items
+                
+                // Synchronize state: Replace current category items with fresh ones from server
+                val currentList = _discoveredMedia.value.toMutableList()
+                if (category == MediaCategory.ALL) {
+                    // Refreshing ALL: Replace everything
+                    _discoveredMedia.value = items
+                } else {
+                    // Refreshing specific category: Remove old ones in this category and add new ones
+                    currentList.removeAll { it.category == category }
+                    currentList.addAll(items)
+                    _discoveredMedia.value = currentList
                 }
+                return@withContext items
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to refresh media catalog: ${e.message}")
@@ -851,7 +861,15 @@ object HttpServerRepository : ServerRepository {
     override suspend fun deleteFile(path: String): Boolean = withContext(Dispatchers.IO) {
         val api = ApiClient.getApiService() ?: return@withContext false
         try {
-            api.deleteFile(sanitizePath(path)).isSuccessful
+            val response = api.deleteFile(sanitizePath(path))
+            if (response.isSuccessful) {
+                // Remove from local cache immediately
+                _discoveredMedia.update { list -> 
+                    list.filter { it.filePath != path }
+                }
+                return@withContext true
+            }
+            false
         } catch (e: Exception) {
             Log.e(TAG, "Delete failed: ${e.message}")
             false

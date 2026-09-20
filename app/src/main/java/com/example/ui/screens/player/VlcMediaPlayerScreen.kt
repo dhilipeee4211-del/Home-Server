@@ -1,5 +1,6 @@
 package com.example.ui.screens.player
 
+import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -7,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +42,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,12 +57,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -69,7 +78,7 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import java.util.Locale
 
-private val Glass = Color.Black.copy(alpha = 0.46f)
+private val Glass = Color.Black.copy(alpha = 0.55f)
 private val Accent = Color(0xFF42C7FF)
 
 @Composable
@@ -80,13 +89,19 @@ fun VlcMediaPlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    
     val player = remember(videoUrl) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUrl))
-            prepare()
-            playWhenReady = true
-        }
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(AudioAttributes.DEFAULT, true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(videoUrl))
+                prepare()
+                playWhenReady = true
+            }
     }
+    
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
     var errorText by remember { mutableStateOf<String?>(null) }
@@ -103,6 +118,7 @@ fun VlcMediaPlayerScreen(
         controlsVisible = true
         lastInteraction = System.currentTimeMillis()
     }
+    
     fun seek(offset: Long) {
         interact()
         player.seekTo((player.currentPosition + offset).coerceIn(0L, player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE))
@@ -110,14 +126,34 @@ fun VlcMediaPlayerScreen(
 
     BackHandler(onBack = onNavigateBack)
 
-    DisposableEffect(player) {
+    DisposableEffect(player, lifecycleOwner) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) { buffering = state == Player.STATE_BUFFERING }
             override fun onPlayerError(error: PlaybackException) { errorText = error.message ?: "Playback failed"; buffering = false }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
+
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    player.pause()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (isPlaying && errorText == null) {
+                        player.play()
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            player.removeListener(listener)
+            player.release()
+        }
     }
 
     LaunchedEffect(player, lastInteraction, controlsVisible, isPlaying) {
@@ -125,20 +161,53 @@ fun VlcMediaPlayerScreen(
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it > 0 } ?: 0L
             if (controlsVisible && isPlaying) {
-                delay(3500)
-                if (System.currentTimeMillis() - lastInteraction >= 3300) controlsVisible = false
+                delay(4000)
+                if (System.currentTimeMillis() - lastInteraction >= 3800) controlsVisible = false
             } else delay(400)
         }
     }
 
     Box(
-        modifier = modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
-            detectHorizontalDragGestures(
-                onHorizontalDrag = { _, dragAmount ->
-                    if (kotlin.math.abs(dragAmount) > 45) seek(if (dragAmount > 0) 10_000 else -10_000)
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .focusable()
+            .onKeyEvent { keyEvent ->
+                interact()
+                val nativeEvent = keyEvent.nativeKeyEvent
+                if (nativeEvent.action == KeyEvent.ACTION_DOWN) {
+                    when (nativeEvent.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                            if (player.isPlaying) player.pause() else player.play()
+                            return@onKeyEvent true
+                        }
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            seek(-10_000)
+                            return@onKeyEvent true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            seek(10_000)
+                            return@onKeyEvent true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            seek(30_000)
+                            return@onKeyEvent true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            seek(-30_000)
+                            return@onKeyEvent true
+                        }
+                    }
                 }
-            )
-        }
+                false
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { _, dragAmount ->
+                        if (kotlin.math.abs(dragAmount) > 45) seek(if (dragAmount > 0) 10_000 else -10_000)
+                    }
+                )
+            }
     ) {
         AndroidView(
             factory = {
@@ -172,7 +241,7 @@ fun VlcMediaPlayerScreen(
 
         AnimatedVisibility(visible = controlsVisible && errorText == null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().clickable { interact() }) {
-                Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(.72f), Color.Transparent))).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(.82f), Color.Transparent))).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onNavigateBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                     Text(videoTitle, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     Box {
@@ -191,7 +260,7 @@ fun VlcMediaPlayerScreen(
                     IconButton(onClick = { seek(10_000) }, Modifier.size(58.dp).clip(CircleShape).background(Glass)) { Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White) }
                 }
 
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.86f)))).padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.90f)))).padding(horizontal = 16.dp, vertical = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${formatTime(position)} / ${formatTime(duration)}", color = Color.White, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.weight(1f))
@@ -213,3 +282,4 @@ private fun formatTime(ms: Long): String {
     val s = total % 60
     return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s) else String.format(Locale.US, "%02d:%02d", m, s)
 }
+
